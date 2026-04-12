@@ -1,0 +1,530 @@
+/**
+ * medienmanager-admin.css
+ *
+ * Styles für die Admin-Oberfläche des Medien Managers.
+ * Setzt auf das ProcessWire UIkit-Admin-Theme auf.
+ *
+ * @copyright 2026 bsProcessMedienManager
+ */
+
+/* -------------------------------------------------------------------------
+   Wrapper & Toolbar
+   ---------------------------------------------------------------------- */
+
+.mm-admin-wrap {
+	max-width: 100%;
+}
+
+.mm-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 12px;
+	padding: 14px 0 18px;
+	border-bottom: 1px solid #e5e5e5;
+	margin-bottom: 20px;
+}
+
+.mm-toolbar-left,
+.mm-toolbar-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.mm-upload-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+
+/* -------------------------------------------------------------------------
+   Filter-Leiste
+   ---------------------------------------------------------------------- */
+
+.mm-filter-form {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.mm-filter-select,
+.mm-search-input {
+	height: 32px;
+	padding: 0 10px;
+	border: 1px solid #ccc;
+	border-radius: 3px;
+	font-size: 13px;
+	background: #fff;
+	color: #333;
+}
+
+.mm-filter-select { min-width: 130px; }
+.mm-search-input  { min-width: 180px; }
+
+/* -------------------------------------------------------------------------
+   Responsive Grid
+   ---------------------------------------------------------------------- */
+
+.mm-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+	gap: 16px;
+	margin-bottom: 24px;
+}
+
+.mm-grid-item {
+	position: relative;
+	background: #fff;
+	border: 1px solid #e0e0e0;
+	border-radius: 6px;
+	overflow: hidden;
+	transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.3s ease;
+	cursor: pointer;
+}
+
+.mm-grid-item:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+}
+
+.mm-grid-thumb {
+	position: relative;
+	width: 100%;
+	padding-bottom: 75%; /* 4:3 Seitenverhältnis */
+	background: #f5f5f5;
+	overflow: hidden;
+}
+
+.mm-grid-thumb img {
+	position: absolute;
+	top: 0; left: 0;
+	width: 100%; height: 100%;
+	object-fit: cover;
+}
+
+.mm-grid-icon {
+	position: absolute;
+	top: 50%; left: 50%;
+	transform: translate(-50%, -50%);
+	font-size: 36px;
+	color: #aaa;
+}
+
+.mm-grid-info {
+	padding: 8px 10px 6px;
+}
+
+.mm-grid-title {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: #333;
+}
+
+.mm-grid-typ {
+	display: inline-block;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: #888;
+	margin-top: 2px;
+}
+
+/* Aktionsleiste (erscheint bei Hover) */
+.mm-grid-actions {
+	position: absolute;
+	top: 6px; right: 6px;
+	display: flex;
+	gap: 4px;
+	opacity: 0;
+	transition: opacity 0.15s ease;
+}
+
+.mm-grid-item:hover .mm-grid-actions {
+	opacity: 1;
+}
+
+.mm-btn-edit,
+.mm-btn-imageedit,
+.mm-btn-delete {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px; height: 28px;
+	border-radius: 4px;
+	border: none;
+	cursor: pointer;
+	font-size: 13px;
+	text-decoration: none;
+	transition: background 0.12s ease;
+}
+
+.mm-btn-edit      { background: rgba(255,255,255,0.9); color: #2878d7; }
+.mm-btn-imageedit { background: rgba(255,255,255,0.9); color: #28a745; }
+.mm-btn-delete    { background: rgba(255,255,255,0.9); color: #c0392b; }
+
+.mm-btn-edit:hover      { background: #2878d7; color: #fff; }
+.mm-btn-imageedit:hover { background: #28a745; color: #fff; }
+.mm-btn-delete:hover    { background: #c0392b; color: #fff; }
+
+/* Kein Inhalt */
+.mm-empty {
+	grid-column: 1 / -1;
+	text-align: center;
+	color: #999;
+	padding: 40px 0;
+}
+
+/* Neues Item — Highlight nach Upload */
+.mm-item-highlight {
+	outline: 2px solid #2878d7;
+}
+
+/* Sanfter Ausblend-Übergang beim Löschen */
+.mm-grid-item {
+	transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.3s ease;
+}
+
+/* -------------------------------------------------------------------------
+   Pagination
+   ---------------------------------------------------------------------- */
+
+.mm-pagination {
+	display: flex;
+	gap: 6px;
+	justify-content: center;
+	margin-bottom: 24px;
+}
+
+.mm-pagination a {
+	display: inline-block;
+	padding: 4px 10px;
+	border: 1px solid #ccc;
+	border-radius: 3px;
+	text-decoration: none;
+	color: #333;
+	font-size: 13px;
+}
+
+.mm-pagination a:hover,
+.mm-page-active {
+	background: #2878d7;
+	color: #fff !important;
+	border-color: #2878d7;
+}
+
+/* -------------------------------------------------------------------------
+   Upload-Modal
+   ---------------------------------------------------------------------- */
+
+.mm-modal {
+	position: fixed;
+	top: 0; left: 0;
+	width: 100%; height: 100%;
+	z-index: 10000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.mm-modal-backdrop {
+	position: absolute;
+	top: 0; left: 0;
+	width: 100%; height: 100%;
+	background: rgba(0,0,0,0.55);
+}
+
+.mm-modal-dialog {
+	position: relative;
+	background: #fff;
+	border-radius: 8px;
+	width: 90%;
+	max-width: 580px;
+	max-height: 90vh;
+	display: flex;
+	flex-direction: column;
+	box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+	overflow: hidden;
+}
+
+.mm-modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 16px 20px;
+	border-bottom: 1px solid #e5e5e5;
+	background: #f9f9f9;
+	flex-shrink: 0;
+}
+
+.mm-modal-title {
+	font-size: 15px;
+	font-weight: 600;
+	color: #333;
+}
+
+.mm-modal-close {
+	background: none;
+	border: none;
+	font-size: 20px;
+	cursor: pointer;
+	color: #888;
+	line-height: 1;
+	padding: 0 2px;
+}
+
+.mm-modal-close:hover { color: #333; }
+
+.mm-modal-body {
+	padding: 20px;
+	overflow-y: auto;
+	flex: 1;
+}
+
+.mm-modal-footer {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
+	padding: 14px 20px;
+	border-top: 1px solid #e5e5e5;
+	background: #f9f9f9;
+	flex-shrink: 0;
+}
+
+/* Upload Drop-Zone */
+.mm-upload-drop-zone {
+	border: 2px dashed #ccc;
+	border-radius: 6px;
+	text-align: center;
+	padding: 32px 20px;
+	cursor: pointer;
+	color: #888;
+	margin-bottom: 16px;
+	transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.mm-upload-drop-zone:hover,
+.mm-drag-over {
+	border-color: #2878d7;
+	background: #f0f6ff;
+	color: #2878d7;
+}
+
+.mm-upload-drop-zone i {
+	font-size: 36px;
+	margin-bottom: 8px;
+	display: block;
+}
+
+.mm-upload-drop-zone input[type="file"] {
+	display: none;
+}
+
+.mm-upload-hint {
+	font-size: 11px;
+	color: #bbb;
+	margin-top: 4px;
+}
+
+/* Fortschrittsbalken */
+.mm-upload-progress {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex: 1;
+}
+
+.mm-progress-bar {
+	flex: 1;
+	height: 6px;
+	background: #eee;
+	border-radius: 3px;
+	overflow: hidden;
+}
+
+.mm-progress-fill {
+	height: 100%;
+	background: #2878d7;
+	width: 0;
+	transition: width 0.15s ease;
+}
+
+.mm-progress-text {
+	font-size: 12px;
+	color: #666;
+	min-width: 32px;
+}
+
+/* -------------------------------------------------------------------------
+   Edit-Formular
+   ---------------------------------------------------------------------- */
+
+.mm-edit-wrap {
+	max-width: 640px;
+}
+
+.mm-edit-preview {
+	margin-bottom: 20px;
+}
+
+.mm-edit-preview img {
+	max-width: 100%;
+	border-radius: 6px;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.mm-edit-preview-file {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 16px;
+	background: #f5f5f5;
+	border-radius: 6px;
+	color: #555;
+}
+
+.mm-edit-preview-file i { font-size: 28px; }
+
+.mm-edit-actions {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-top: 20px;
+	padding-top: 16px;
+	border-top: 1px solid #eee;
+}
+
+.mm-btn-delete-single { color: #c0392b; }
+.mm-btn-delete-single:hover { background: #c0392b !important; color: #fff !important; }
+
+/* -------------------------------------------------------------------------
+   Bildbearbeitung
+   ---------------------------------------------------------------------- */
+
+.mm-imageedit-wrap {
+	display: flex;
+	gap: 24px;
+	flex-wrap: wrap;
+}
+
+.mm-imageedit-canvas {
+	flex: 1;
+	min-width: 200px;
+	background: #f0f0f0;
+	border-radius: 6px;
+	overflow: hidden;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 300px;
+}
+
+.mm-imageedit-canvas img {
+	max-width: 100%;
+	max-height: 70vh;
+	display: block;
+}
+
+.mm-imageedit-toolbar {
+	width: 220px;
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+}
+
+.mm-imageedit-rotate,
+.mm-imageedit-resize,
+.mm-imageedit-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.mm-imageedit-toolbar label {
+	font-size: 12px;
+	color: #666;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.mm-imageedit-toolbar .uk-input {
+	width: 100%;
+}
+
+/* -------------------------------------------------------------------------
+   Kategorien-Verwaltung
+   ---------------------------------------------------------------------- */
+
+.mm-kategorien-wrap {
+	max-width: 600px;
+}
+
+.mm-kat-form {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 24px;
+	flex-wrap: wrap;
+}
+
+.mm-kat-form .uk-input {
+	flex: 1;
+	min-width: 180px;
+}
+
+.mm-kat-table {
+	width: 100%;
+}
+
+.mm-kat-delete {
+	background: none;
+	border: none;
+	cursor: pointer;
+	color: #c0392b;
+}
+
+/* -------------------------------------------------------------------------
+   Loading-Spinner
+   ---------------------------------------------------------------------- */
+
+.mm-loading {
+	text-align: center;
+	padding: 30px;
+	color: #888;
+}
+
+/* -------------------------------------------------------------------------
+   Responsive Anpassungen
+   ---------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+	.mm-toolbar {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+
+	.mm-grid {
+		grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+		gap: 12px;
+	}
+
+	.mm-imageedit-wrap {
+		flex-direction: column;
+	}
+
+	.mm-imageedit-toolbar {
+		width: 100%;
+		flex-direction: row;
+		flex-wrap: wrap;
+	}
+}

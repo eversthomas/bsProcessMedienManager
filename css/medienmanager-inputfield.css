@@ -1,0 +1,413 @@
+/**
+ * medienmanager-inputfield.css
+ *
+ * Styles für den InputfieldMedienManager (Modal-Picker).
+ * Wird im Page-Editor-Kontext geladen und überlagert nicht das Admin-Theme.
+ *
+ * @copyright 2026 bsProcessMedienManager
+ */
+
+/* -------------------------------------------------------------------------
+   Inputfield-Wrapper
+   ---------------------------------------------------------------------- */
+
+.mm-inputfield-wrap {
+	padding: 8px 0 4px;
+}
+
+/* -------------------------------------------------------------------------
+   Ausgewählte Items (Chip-Leiste)
+   ---------------------------------------------------------------------- */
+
+.mm-selected-items {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-bottom: 12px;
+	min-height: 10px;
+}
+
+.mm-chip {
+	position: relative;
+	display: inline-flex;
+	flex-direction: column;
+	align-items: center;
+	width: 90px;
+	background: #f5f5f5;
+	border: 1px solid #ddd;
+	border-radius: 6px;
+	overflow: hidden;
+	font-size: 11px;
+	color: #444;
+	transition: box-shadow 0.12s ease;
+}
+
+.mm-chip:hover {
+	box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
+.mm-chip img {
+	width: 100%;
+	height: 68px;
+	object-fit: cover;
+	display: block;
+}
+
+.mm-type-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 68px;
+	font-size: 26px;
+	color: #aaa;
+	background: #eee;
+}
+
+.mm-chip-title {
+	padding: 4px 6px;
+	width: 100%;
+	text-align: center;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 10px;
+	color: #555;
+}
+
+.mm-chip-loading {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 68px;
+	color: #aaa;
+}
+
+/* Entfernen-Button am Chip */
+.mm-remove-item {
+	position: absolute;
+	top: 3px; right: 3px;
+	width: 18px; height: 18px;
+	background: rgba(0,0,0,0.55);
+	color: #fff;
+	border: none;
+	border-radius: 50%;
+	font-size: 12px;
+	line-height: 1;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.mm-chip:hover .mm-remove-item {
+	opacity: 1;
+}
+
+.mm-remove-item:hover {
+	background: #c0392b;
+}
+
+/* Read-only Chips */
+.mm-readonly .mm-chip {
+	cursor: default;
+}
+
+/* -------------------------------------------------------------------------
+   "Medien auswählen"-Button
+   ---------------------------------------------------------------------- */
+
+.mm-open-modal {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+
+/* -------------------------------------------------------------------------
+   Modal-Overlay
+   ---------------------------------------------------------------------- */
+
+.mm-modal {
+	position: fixed;
+	top: 0; left: 0;
+	width: 100%; height: 100%;
+	z-index: 10000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.mm-modal-backdrop {
+	position: absolute;
+	top: 0; left: 0;
+	width: 100%; height: 100%;
+	background: rgba(0,0,0,0.55);
+}
+
+.mm-modal-dialog {
+	position: relative;
+	background: #fff;
+	border-radius: 8px;
+	width: 92%;
+	max-width: 900px;
+	height: 85vh;
+	display: flex;
+	flex-direction: column;
+	box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+	overflow: hidden;
+}
+
+/* -------------------------------------------------------------------------
+   Modal-Header
+   ---------------------------------------------------------------------- */
+
+.mm-modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 14px 18px;
+	border-bottom: 1px solid #e5e5e5;
+	background: #f9f9f9;
+	flex-shrink: 0;
+}
+
+.mm-modal-title {
+	font-size: 15px;
+	font-weight: 600;
+	color: #333;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.mm-modal-close {
+	background: none;
+	border: none;
+	font-size: 20px;
+	cursor: pointer;
+	color: #888;
+	line-height: 1;
+	padding: 0 4px;
+}
+
+.mm-modal-close:hover { color: #333; }
+
+/* -------------------------------------------------------------------------
+   Modal-Toolbar (Filter)
+   ---------------------------------------------------------------------- */
+
+.mm-modal-toolbar {
+	padding: 10px 18px;
+	border-bottom: 1px solid #eee;
+	background: #fafafa;
+	flex-shrink: 0;
+}
+
+.mm-filter-row {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.mm-filter-typ,
+.mm-filter-kategorie,
+.mm-filter-suche {
+	height: 30px;
+	padding: 0 10px;
+	border: 1px solid #ccc;
+	border-radius: 3px;
+	font-size: 13px;
+	background: #fff;
+	color: #333;
+}
+
+.mm-filter-typ      { min-width: 120px; }
+.mm-filter-kategorie{ min-width: 140px; }
+.mm-filter-suche    { flex: 1; min-width: 160px; }
+
+/* -------------------------------------------------------------------------
+   Modal-Body (Picker-Grid)
+   ---------------------------------------------------------------------- */
+
+.mm-modal-body {
+	padding: 16px 18px;
+	overflow-y: auto;
+	flex: 1;
+}
+
+/* Grid der auswählbaren Items */
+.mm-picker-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+	gap: 12px;
+}
+
+.mm-picker-item {
+	position: relative;
+	border: 2px solid transparent;
+	border-radius: 6px;
+	overflow: hidden;
+	cursor: pointer;
+	background: #f5f5f5;
+	transition: border-color 0.12s ease, transform 0.12s ease;
+}
+
+.mm-picker-item:hover {
+	border-color: #2878d7;
+	transform: translateY(-1px);
+}
+
+/* Ausgewählter Zustand */
+.mm-picker-item.mm-selected {
+	border-color: #2878d7;
+	background: #f0f6ff;
+}
+
+.mm-picker-item.mm-selected::after {
+	content: '\f00c';
+	font-family: FontAwesome, sans-serif;
+	position: absolute;
+	top: 6px; right: 6px;
+	width: 22px; height: 22px;
+	background: #2878d7;
+	color: #fff;
+	border-radius: 50%;
+	font-size: 11px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.mm-picker-thumb {
+	position: relative;
+	padding-bottom: 75%;
+	overflow: hidden;
+	background: #eee;
+}
+
+.mm-picker-thumb img {
+	position: absolute;
+	top: 0; left: 0;
+	width: 100%; height: 100%;
+	object-fit: cover;
+}
+
+.mm-picker-thumb .mm-type-icon {
+	position: absolute;
+	top: 50%; left: 50%;
+	transform: translate(-50%, -50%);
+	font-size: 30px;
+	color: #aaa;
+	background: none;
+	height: auto;
+	width: auto;
+}
+
+.mm-picker-title {
+	padding: 5px 7px;
+	font-size: 11px;
+	color: #555;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Kein Inhalt */
+.mm-empty {
+	text-align: center;
+	color: #999;
+	padding: 40px 0;
+}
+
+/* Fehlermeldung */
+.mm-error {
+	text-align: center;
+	color: #c0392b;
+	padding: 20px 0;
+}
+
+/* Lade-Spinner */
+.mm-loading {
+	text-align: center;
+	padding: 30px;
+	color: #888;
+}
+
+/* -------------------------------------------------------------------------
+   Modal-Pagination
+   ---------------------------------------------------------------------- */
+
+.mm-modal-pagination {
+	display: flex;
+	gap: 6px;
+	justify-content: center;
+	padding-top: 16px;
+}
+
+.mm-pag-btn {
+	padding: 4px 10px;
+	border: 1px solid #ccc;
+	border-radius: 3px;
+	background: #fff;
+	cursor: pointer;
+	font-size: 13px;
+	color: #333;
+	transition: background 0.1s ease;
+}
+
+.mm-pag-btn:hover,
+.mm-pag-active {
+	background: #2878d7;
+	color: #fff;
+	border-color: #2878d7;
+}
+
+/* -------------------------------------------------------------------------
+   Modal-Footer
+   ---------------------------------------------------------------------- */
+
+.mm-modal-footer {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
+	padding: 12px 18px;
+	border-top: 1px solid #e5e5e5;
+	background: #f9f9f9;
+	flex-shrink: 0;
+}
+
+.mm-selection-count {
+	margin-right: auto;
+	font-size: 13px;
+	color: #666;
+}
+
+/* -------------------------------------------------------------------------
+   Responsive Anpassungen
+   ---------------------------------------------------------------------- */
+
+@media (max-width: 600px) {
+	.mm-modal-dialog {
+		width: 98%;
+		height: 92vh;
+	}
+
+	.mm-picker-grid {
+		grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+		gap: 8px;
+	}
+
+	.mm-filter-row {
+		flex-direction: column;
+	}
+
+	.mm-filter-suche {
+		min-width: 0;
+		width: 100%;
+	}
+}
