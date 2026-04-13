@@ -160,9 +160,9 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 
 | # | Schritt | Beschreibung | Nach |
 |---|---------|--------------|-----|
-| 7.1 | `[ ]` | **Fieldtype + Inputfield:** Feld speichert Referenz(en) auf Medien-Items (Page-IDs oder abgeleitetes Modell); Validierung, leere Werte, kompatibel mit bestehendem `InputfieldMedienManager` oder klar getrennte Evolution. | Phase 4.1 |
-| 7.2 | `[ ]` | **Template-API & Snippets:** Ausgabe im Frontend (URL, `Pageimage` wo möglich, Alt-Text aus Medien-Metadaten); **Codebeispiele** (ein Bild / mehrere Bilder) analog zu `Image`/`Images`-Dokumentation; Verweis in **API.md** oder zentraler Modul-Doku. | 7.1 |
-| 7.3 | `[ ]` | **Edge Cases:** Was passiert bei gelöschtem Medien-Item, fehlender Datei, Rechte im Frontend — definiertes Verhalten (NullPage, leere Ausgabe, Hinweis). | 7.2 |
+| 7.1 | `[x]` | **Fieldtype + Inputfield:** Feld speichert Referenz(en) auf Medien-Items (Page-IDs oder abgeleitetes Modell); Validierung, leere Werte, kompatibel mit bestehendem `InputfieldMedienManager` oder klar getrennte Evolution. | Phase 4.1 |
+| 7.2 | `[x]` | **Template-API & Snippets:** Ausgabe im Frontend (URL, `Pageimage` wo möglich, Alt-Text aus Medien-Metadaten); **Codebeispiele** (ein Bild / mehrere Bilder) analog zu `Image`/`Images`-Dokumentation; Verweis in **API.md** oder zentraler Modul-Doku. | 7.1 |
+| 7.3 | `[x]` | **Edge Cases:** Was passiert bei gelöschtem Medien-Item, fehlender Datei, Rechte im Frontend — definiertes Verhalten (NullPage, leere Ausgabe, Hinweis). | 7.2 |
 
 ---
 
@@ -182,6 +182,7 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 | 2026-04-13 | **Phase 4** im Code umgesetzt: `lib/MediaManagerAjaxTrait.php`, `lib/MediaManagerRenderTrait.php`, PHPDoc an `MediaManagerAPI`, `API.md`. Modulversion **1.7**. |
 | 2026-04-13 | **Phase 5** umgesetzt: `README.md` (Bedienung + Erweiterungsabschnitte), Deinstallationsstrategie, `MediaManagerAPI::uninstall()` leert Modul-Config. Modulversion **1.8**. |
 | 2026-04-13 | **Phase 6** umgesetzt: Schreib-AJAX nur POST+CSRF, Upload-Größe (ini + Modul-MB), Bulk-ID-Limit 500, Test-JSON ohne GET-Werte, `SECURITY.md`. Modulversion **1.9**. |
+| 2026-04-13 | **Phase 7** umgesetzt: `MedienManagerField`, Fieldtype-Vorlagen (Image/Images-ähnlich), Snippets in Feldkonfiguration, `getAccessibleLabel`/`getCaption`/`hasRenderableImage`, Picker-Filter `allowed_types`, `API.md` erweitert. Modulversion **2.0**. |
 
 ---
 

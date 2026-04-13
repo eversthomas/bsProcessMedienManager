@@ -18,7 +18,7 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 	public static function getModuleInfo(): array {
 		return [
 			'title'    => 'Medien Manager Inputfield',
-			'version'  => 1,
+			'version'  => 2,
 			'summary'  => 'Modal-Picker zur Auswahl von Medien aus dem Medien Manager.',
 			'requires' => ['bsProcessMedienManager'],
 		];
@@ -69,7 +69,14 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 		$value     = $this->attr('value'); // PageArray nach wakeup
 		$maxItems  = (int) $this->maxItems;
 
-		$out = "<div class='mm-inputfield-wrap' data-name='" . $sanitizer->entities($name) . "' data-max='$maxItems'>";
+		$allowed = $this->allowedTypes;
+		if(!is_array($allowed)) {
+			$allowed = [];
+		}
+		$allowedJson = htmlspecialchars(json_encode(array_values($allowed), JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8');
+		$onlyBild      = count($allowed) === 1 && ($allowed[0] ?? '') === 'bild';
+
+		$out = "<div class='mm-inputfield-wrap' data-name='" . $sanitizer->entities($name) . "' data-max='$maxItems' data-allowed-types='$allowedJson'>";
 
 		// Aktuell gewählte Items als Thumbnail-Chips
 		$out .= "<div class='mm-selected-items'>";
@@ -89,14 +96,16 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 		}
 		$out .= "</div>";
 
+		$btnLabel = $onlyBild ? 'Bild(er) auswählen' : 'Medien auswählen';
+
 		// "Medien auswählen"-Button
 		$out .= "<button type='button' class='mm-open-modal ui-button ui-state-default' "
 			. "data-field='" . $sanitizer->entities($name) . "'>"
-			. "<i class='fa fa-photo'></i> Medien auswählen"
+			. "<i class='fa fa-photo'></i> " . $sanitizer->entities($btnLabel)
 			. "</button>";
 
 		// Modal-Container (wird per AJAX befüllt)
-		$out .= $this->_renderModal($name);
+		$out .= $this->_renderModal($name, $allowed);
 
 		$out .= "</div>"; // .mm-inputfield-wrap
 
@@ -150,7 +159,7 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 			$p = $this->wire->pages->get(
 				"id=$id, template=" . MediaManagerAPI::ITEM_TEMPLATE . ", include=all"
 			);
-			if($p->id) {
+			if($p->id && $this->_itemMatchesAllowedTypes($p)) {
 				$pageArray->add($p);
 				$count++;
 			}
@@ -179,15 +188,6 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 	public function ___getConfigInputfields(): InputfieldWrapper {
 		$wrapper = parent::___getConfigInputfields();
 
-		/** @var InputfieldInteger $f */
-		$f = $this->wire->modules->get('InputfieldInteger');
-		$f->attr('name', 'maxItems');
-		$f->label       = 'Maximale Anzahl auswählbarer Medien';
-		$f->description = '0 = unbegrenzt, 1 = Einzelauswahl';
-		$f->attr('value', (int) ($this->maxItems ?? 0));
-		$f->min         = 0;
-		$wrapper->add($f);
-
 		/** @var InputfieldCheckboxes $f2 */
 		$f2 = $this->wire->modules->get('InputfieldCheckboxes');
 		$f2->attr('name', 'allowedTypes');
@@ -204,6 +204,20 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 	// -----------------------------------------------------------------------
 	// Interne Hilfsmethoden
 	// -----------------------------------------------------------------------
+
+	/**
+	 * Prüft mm_typ gegen die im Feld erlaubten Typen (leer = alle).
+	 */
+	protected function _itemMatchesAllowedTypes(Page $page): bool {
+		$allowed = $this->allowedTypes;
+		if(!is_array($allowed) || !count($allowed)) {
+			return true;
+		}
+		require_once dirname(__FILE__) . '/MediaManagerAPI.php';
+		$api = new MediaManagerAPI($this->wire());
+
+		return in_array($api->getTypString($page), $allowed, true);
+	}
 
 	/**
 	 * Thumbnail-Chip für ein einzelnes Medien-Item rendern.
@@ -247,31 +261,70 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 	/**
 	 * Modal-Markup rendern (wird per JS mit Inhalt gefüllt).
 	 *
-	 * @param string $fieldName
-	 * @return string HTML
+	 * @param list<string> $allowedTypes leer = alle Typen
 	 */
-	protected function _renderModal(string $fieldName): string {
+	protected function _renderModal(string $fieldName, array $allowedTypes = []): string {
 		$sanitizer = $this->wire->sanitizer;
 		$fn        = $sanitizer->entities($fieldName);
+
+		$labels = [
+			'bild'  => 'Bilder',
+			'video' => 'Videos',
+			'pdf'   => 'PDFs',
+		];
+
+		$typOpts = '';
+		if(!count($allowedTypes)) {
+			$typOpts .= "<option value=''>" . $sanitizer->entities('Alle Typen') . "</option>";
+			foreach($labels as $val => $lab) {
+				$typOpts .= "<option value='" . $sanitizer->entities($val) . "'>" . $sanitizer->entities($lab) . "</option>";
+			}
+		} elseif(count($allowedTypes) === 1) {
+			foreach($allowedTypes as $val) {
+				$val = $sanitizer->name((string) $val);
+				if($val === '' || !isset($labels[$val])) {
+					continue;
+				}
+				$typOpts .= "<option value='" . $sanitizer->entities($val) . "' selected>" . $sanitizer->entities($labels[$val]) . "</option>";
+			}
+			if($typOpts === '') {
+				$typOpts = "<option value=''>" . $sanitizer->entities('Alle Typen') . "</option>";
+				foreach($labels as $val => $lab) {
+					$typOpts .= "<option value='" . $sanitizer->entities($val) . "'>" . $sanitizer->entities($lab) . "</option>";
+				}
+			}
+		} else {
+			$typOpts .= "<option value=''>" . $sanitizer->entities('Alle erlaubten Typen') . "</option>";
+			foreach($allowedTypes as $val) {
+				$val = $sanitizer->name((string) $val);
+				if($val === '' || !isset($labels[$val])) {
+					continue;
+				}
+				$typOpts .= "<option value='" . $sanitizer->entities($val) . "'>" . $sanitizer->entities($labels[$val]) . "</option>";
+			}
+		}
+
+		$onlyBild = count($allowedTypes) === 1 && ($allowedTypes[0] ?? '') === 'bild';
+		$modalTitle = $onlyBild ? 'Bilder auswählen' : 'Medien auswählen';
+		$typHide    = count($allowedTypes) === 1 ? " style='display:none'" : '';
 
 		return "
 		<div id='mm-modal-{$fn}' class='mm-modal' style='display:none' data-field='{$fn}'>
 			<div class='mm-modal-backdrop'></div>
 			<div class='mm-modal-dialog'>
 				<div class='mm-modal-header'>
-					<span class='mm-modal-title'><i class='fa fa-photo'></i> Medien auswählen</span>
+					<span class='mm-modal-title'><i class='fa fa-photo'></i> " . $sanitizer->entities($modalTitle) . "</span>
 					<button type='button' class='mm-modal-close'>&times;</button>
 				</div>
 				<div class='mm-modal-toolbar'>
 					<div class='mm-filter-row'>
+						<span class='mm-filter-typ-wrap'" . $typHide . ">
 						<select class='mm-filter-typ' data-field='{$fn}'>
-							<option value=''>Alle Typen</option>
-							<option value='bild'>Bilder</option>
-							<option value='video'>Videos</option>
-							<option value='pdf'>PDFs</option>
+							{$typOpts}
 						</select>
+						</span>
 						<select class='mm-filter-kategorie' data-field='{$fn}'>
-							<option value=''>Alle Kategorien</option>
+							<option value=''>" . $sanitizer->entities('Alle Kategorien') . "</option>
 						</select>
 						<input type='search' class='mm-filter-suche' placeholder='Suchen…' data-field='{$fn}'>
 					</div>

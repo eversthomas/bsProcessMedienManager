@@ -16,12 +16,19 @@ class FieldtypeMedienManager extends FieldtypeMulti {
 	 */
 	public static function getModuleInfo(): array {
 		return [
-			'title'    => 'Medien Manager Fieldtype',
-			'version'  => 1,
-			'summary'  => 'Speichert Referenzen auf Medien-Items des Medien Managers (Page-IDs).',
+			'title'    => 'Medien (Manager)',
+			'version'  => 2,
+			'summary'  => 'Referenzen auf Medien-Items (Bibliothek) — vergleichbar mit Image/Images, inkl. Template-Snippets.',
 			'requires' => ['InputfieldMedienManager'],
 			'installs' => ['InputfieldMedienManager'],
 		];
+	}
+
+	/**
+	 * @param array<string, mixed> $a
+	 */
+	public function getFieldClass(array $a = array()) {
+		return 'MedienManagerField';
 	}
 
 	// -----------------------------------------------------------------------
@@ -38,7 +45,6 @@ class FieldtypeMedienManager extends FieldtypeMulti {
 	public function getInputfield(Page $page, Field $field): Inputfield {
 		/** @var InputfieldMedienManager $inputfield */
 		$inputfield = $this->wire->modules->get('InputfieldMedienManager');
-		$inputfield->setField($field);
 		return $inputfield;
 	}
 
@@ -171,6 +177,36 @@ class FieldtypeMedienManager extends FieldtypeMulti {
 	// -----------------------------------------------------------------------
 
 	/**
+	 * Vorlagen beim Anlegen eines neuen Feldes (wie Image/Images).
+	 *
+	 * @return array<string, array<string, mixed>>
+	 */
+	public function ___getFieldSetups() {
+		return [
+			'single_image' => [
+				'title'        => $this->_('Einzelbild (wie Image) — nur Bilder, eine Datei'),
+				'maxItems'     => 1,
+				'allowedTypes' => ['bild'],
+			],
+			'multiple_images' => [
+				'title'        => $this->_('Mehrere Bilder (wie Images) — nur Bilder'),
+				'maxItems'     => 0,
+				'allowedTypes' => ['bild'],
+			],
+			'single_media' => [
+				'title'        => $this->_('Einzelmedium — Bild, Video oder PDF'),
+				'maxItems'     => 1,
+				'allowedTypes' => [],
+			],
+			'multiple_media' => [
+				'title'        => $this->_('Mehrere Medien — freie Kombination'),
+				'maxItems'     => 0,
+				'allowedTypes' => [],
+			],
+		];
+	}
+
+	/**
 	 * Konfigurationsformular für das Feld im Backend.
 	 *
 	 * @param Field $field
@@ -188,6 +224,80 @@ class FieldtypeMedienManager extends FieldtypeMulti {
 		$f->min         = 0;
 		$wrapper->add($f);
 
+		$fn = (string) $field->name;
+		$snippets = $this->_buildTemplateSnippetsMarkup($fn);
+
+		/** @var InputfieldMarkup $markup */
+		$markup = $this->wire->modules->get('InputfieldMarkup');
+		$markup->attr('name', '_mm_template_snippets');
+		$markup->label = $this->_('PHP-Beispiele (Frontend) — SEO & Barrierefreiheit');
+		$markup->collapsed = Inputfield::collapsedYes;
+		$markup->textFormat = Inputfield::textFormatNone;
+		$markup->entityEncodeText = false;
+		$markup->markupText = $snippets;
+		$wrapper->add($markup);
+
 		return $wrapper;
 	}
+
+	/**
+	 * HTML mit Code-Snippets für Entwickler (Feldname wird eingesetzt).
+	 */
+	protected function _buildTemplateSnippetsMarkup(string $fieldName): string {
+		$fn = $this->wire->sanitizer->fieldName($fieldName);
+		if($fn === '') {
+			$fn = 'fieldname';
+		}
+
+		$singleCode = implode("\n", [
+			'<?php namespace ProcessWire;',
+			"require_once \$config->paths->site . 'modules/bsProcessMedienManager/MediaManagerAPI.php';",
+			'$mm = new MediaManagerAPI($wire);',
+			'$media = $page->' . $fn . '->first();',
+			'if($media && $media->id && $mm->hasRenderableImage($media)) {',
+			'	$img = $mm->getPrimaryPageimage($media);',
+			"	\$sized = \$img->size(1200, 1200, ['cropping' => false, 'upscaling' => false]);",
+			'	$alt = $mm->getAccessibleLabel($media);',
+			"	echo '<figure class=\"mm-figure\" role=\"group\">';",
+			"	echo '<img src=\"' . \$sized->url . '\" width=\"' . (int) \$sized->width . '\" height=\"' . (int) \$sized->height . '\" alt=\"' . \$wire->sanitizer->entities(\$alt) . '\" loading=\"lazy\" decoding=\"async\">';",
+			'	$cap = $mm->getCaption($media);',
+			"	if(\$cap !== '') echo '<figcaption class=\"mm-figcaption\">' . \$wire->sanitizer->entities(\$cap) . '</figcaption>';",
+			"	echo '</figure>';",
+			'}',
+		]);
+
+		$multiCode = implode("\n", [
+			'<?php namespace ProcessWire;',
+			"require_once \$config->paths->site . 'modules/bsProcessMedienManager/MediaManagerAPI.php';",
+			'$mm = new MediaManagerAPI($wire);',
+			'foreach($page->' . $fn . ' as $media) {',
+			'	if(!$media->id || !$mm->hasRenderableImage($media)) continue;',
+			'	$img = $mm->getPrimaryPageimage($media);',
+			"	\$sized = \$img->size(800, 800, ['cropping' => false, 'upscaling' => false]);",
+			'	$alt = $mm->getAccessibleLabel($media);',
+			"	echo '<img class=\"mm-gallery-img\" src=\"' . \$sized->url . '\" width=\"' . (int) \$sized->width . '\" height=\"' . (int) \$sized->height . '\" alt=\"' . \$wire->sanitizer->entities(\$alt) . '\" loading=\"lazy\" decoding=\"async\">';",
+			'}',
+		]);
+
+		$h = static function(string $s): string {
+			return htmlspecialchars($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+		};
+
+		$out = '<div class="mm-field-snippets">';
+		$out .= '<p class="description">' . $this->_('Der Feldwert ist ein <strong>PageArray</strong> von <code>medienmanager-item</code>-Seiten. Für Alternativtext: <code>getAccessibleLabel()</code> (mm_alt oder Titel). Für <code>&lt;figcaption&gt;</code>: <code>getCaption()</code> (mm_caption).') . '</p>';
+
+		$out .= '<p class="detail">' . $this->_('Ein Bild (maxItems = 1 oder erste Auswahl):') . '</p>';
+		$out .= '<pre class="pw-ui-code" style="white-space:pre-wrap;">' . $h($singleCode) . '</pre>';
+
+		$out .= '<p class="detail">' . $this->_('Mehrere Bilder (Schleife):') . '</p>';
+		$out .= '<pre class="pw-ui-code" style="white-space:pre-wrap;">' . $h($multiCode) . '</pre>';
+
+		$out .= '<p class="notes"><strong>' . $this->_('Edge Cases') . '</strong>: ';
+		$out .= $this->_('Nach Löschen eines Medien-Items entfällt die Referenz beim nächsten Speichern der Seite; in Schleifen sind nur noch gültige Pages enthalten. Video/PDF: statt Pageimage <code>getPublicFileUrl()</code> nutzen. Öffentliche Dateien unterliegen den üblichen PW-Datei-URLs.') . '</p>';
+		$out .= '</div>';
+
+		return $out;
+	}
 }
+
+require_once __DIR__ . '/MedienManagerField.php';

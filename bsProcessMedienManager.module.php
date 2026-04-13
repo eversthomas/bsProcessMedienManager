@@ -38,7 +38,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public static function getModuleInfo(): array {
 		return [
 			'title'       => 'Medien Manager',
-			'version'     => 1.9,
+			'version'     => 2.0,
 			'summary'     => 'Zentrales Medienmanagement für Bilder, Videos und PDFs.',
 			'author'      => 'bsProcessMedienManager',
 			'icon'        => 'photo',
@@ -46,6 +46,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			'permissions' => [
 				'medien-manager' => 'Medien Manager verwenden',
 			],
+			'installs'    => ['InputfieldMedienManager', 'FieldtypeMedienManager'],
 			'page'        => [
 				'name'   => 'medienmanager',
 				'parent' => 'setup',
@@ -666,6 +667,19 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		$this->api = new MediaManagerAPI($this->wire());
 		if(version_compare((string) $fromVersion, '1.5', '<')) {
 			$this->api->install();
+		}
+		if(version_compare((string) $fromVersion, '2.0', '<')) {
+			$modules = $this->wire->modules;
+			foreach(['InputfieldMedienManager', 'FieldtypeMedienManager'] as $sub) {
+				if($modules->isInstalled($sub)) {
+					continue;
+				}
+				try {
+					$modules->install($sub);
+				} catch(\Throwable $e) {
+					$this->log("Upgrade 2.0: Installation $sub fehlgeschlagen — " . $e->getMessage(), true);
+				}
+			}
 		}
 		parent::___upgrade($fromVersion, $toVersion);
 	}

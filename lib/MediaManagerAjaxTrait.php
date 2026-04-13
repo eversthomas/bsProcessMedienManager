@@ -31,6 +31,15 @@ trait MediaManagerAjaxTrait {
 			'q'            => $input->get('q'),
 		];
 
+		$allowRaw = (string) $input->get('allowed_types');
+		$typEmpty = ($filters['typ'] === null || $filters['typ'] === '');
+		if($allowRaw !== '' && $typEmpty) {
+			$typs = array_filter(array_map('trim', explode(',', $allowRaw)));
+			if(count($typs)) {
+				$filters['typs'] = $typs;
+			}
+		}
+
 		$items = $this->api()->findMedia($filters, $start, $this->limit);
 		$total = $items->getTotal();
 		$html  = $this->_renderPickerGrid($items);

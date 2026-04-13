@@ -35,6 +35,16 @@
 	 *
 	 * @param {HTMLElement} wrap
 	 */
+	function parseAllowedTypes(wrap) {
+		var raw = wrap.getAttribute('data-allowed-types') || '[]';
+		try {
+			var a = JSON.parse(raw);
+			return Array.isArray(a) ? a : [];
+		} catch (e) {
+			return [];
+		}
+	}
+
 	function initInputfield(wrap) {
 		var fieldName  = wrap.dataset.name;
 		if (!fieldName) return;
@@ -46,11 +56,18 @@
 			if (id > 0) initialIds.add(id);
 		});
 
+		var allowed = parseAllowedTypes(wrap);
+		var defaultTyp = '';
+		if (allowed.length === 1) {
+			defaultTyp = allowed[0];
+		}
+
 		// Modal-Zustand initialisieren
 		modalState[fieldName] = {
 			selectedIds:    initialIds,
-			currentFilters: { typ: '', kategorie_id: '', q: '' },
+			currentFilters: { typ: defaultTyp, kategorie_id: '', q: '' },
 			currentPage:    0,
+			allowedTypes:   allowed,
 		};
 
 		// "Medien auswählen"-Button
@@ -83,6 +100,17 @@
 		if (!modal) return;
 
 		modal.style.display = 'flex';
+
+		var state = modalState[fieldName];
+		var typSelect = modal.querySelector('.mm-filter-typ');
+		if (state && typSelect) {
+			if (state.allowedTypes && state.allowedTypes.length === 1) {
+				typSelect.value = state.allowedTypes[0];
+				state.currentFilters.typ = state.allowedTypes[0];
+			} else {
+				state.currentFilters.typ = typSelect.value || '';
+			}
+		}
 
 		// Kategorien für den Filter laden (einmalig)
 		var katSelect = modal.querySelector('.mm-filter-kategorie');
@@ -202,6 +230,9 @@
 			kategorie_id: filters.kategorie_id || '',
 			q:            filters.q            || '',
 		});
+		if (state.allowedTypes && state.allowedTypes.length > 1) {
+			params.set('allowed_types', state.allowedTypes.join(','));
+		}
 
 		var url = (cfg.ajaxUrl || './ajax/') + '?' + params.toString();
 		var xhr = new XMLHttpRequest();

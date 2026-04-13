@@ -62,7 +62,7 @@ class MediaManagerAPI {
 	/**
 	 * Medien-Items mit optionalen Filtern (Typ, Kategorie, Volltextsuche).
 	 *
-	 * @param array{typ?: string, kategorie_id?: int, q?: string} $filters
+	 * @param array{typ?: string, typs?: list<string>, kategorie_id?: int, q?: string} $filters
 	 */
 	public function findMedia(array $filters = [], int $start = 0, int $limit = 24): PageArray {
 		$sanitizer = $this->wire->sanitizer;
@@ -71,6 +71,19 @@ class MediaManagerAPI {
 		if(!empty($filters['typ'])) {
 			$typ = $sanitizer->name($filters['typ']);
 			$selector .= ", mm_typ.title=$typ";
+		} elseif(!empty($filters['typs']) && is_array($filters['typs'])) {
+			$parts = [];
+			foreach($filters['typs'] as $t) {
+				$t = $sanitizer->name((string) $t);
+				if($t !== '') {
+					$parts[] = "mm_typ.title=$t";
+				}
+			}
+			if(count($parts) === 1) {
+				$selector .= ', ' . $parts[0];
+			} elseif(count($parts) > 1) {
+				$selector .= ', (' . implode('|', $parts) . ')';
+			}
 		}
 		if(!empty($filters['kategorie_id'])) {
 			$katId = (int) $filters['kategorie_id'];
@@ -78,17 +91,22 @@ class MediaManagerAPI {
 		}
 		if(!empty($filters['q'])) {
 			$q = $sanitizer->selectorValue($filters['q']);
-			$suchTeile = "mm_titel%=$q|mm_tags%=$q";
+			// OR über Felder: mm_titel|mm_tags%=wert — NICHT mm_titel%=wert|mm_tags%=wert
+			// (sonst endet der Wert beim ersten | und mm_tags wird ignoriert).
+			$suchFelder = ['mm_titel'];
+			if($this->wire->fields->get('mm_tags')) {
+				$suchFelder[] = 'mm_tags';
+			}
 			if($this->wire->fields->get('mm_beschreibung')) {
-				$suchTeile .= "|mm_beschreibung%=$q";
+				$suchFelder[] = 'mm_beschreibung';
 			}
 			if($this->wire->fields->get('mm_alt')) {
-				$suchTeile .= "|mm_alt%=$q";
+				$suchFelder[] = 'mm_alt';
 			}
 			if($this->wire->fields->get('mm_caption')) {
-				$suchTeile .= "|mm_caption%=$q";
+				$suchFelder[] = 'mm_caption';
 			}
-			$selector .= ", $suchTeile";
+			$selector .= ', ' . implode('|', $suchFelder) . '%=' . $q;
 		}
 
 		$selector .= ", start=$start, limit=$limit";
@@ -325,6 +343,36 @@ class MediaManagerAPI {
 	public function getTypString(Page $item): string {
 		if (!$item->id || !$item->mm_typ) return 'bild';
 		return strtolower((string) $item->mm_typ->title);
+	}
+
+	/**
+	 * Text für `alt` und Screenreader: zuerst mm_alt, sonst sinnvoller Titel (SEO/A11y).
+	 */
+	public function getAccessibleLabel(Page $item): string {
+		if(!$item->id) return '';
+		$san = $this->wire->sanitizer;
+		if($item->hasField('mm_alt') && trim((string) $item->mm_alt) !== '') {
+			return $san->text((string) $item->mm_alt);
+		}
+		$t = trim((string) ($item->mm_titel ?: $item->title));
+
+		return $t !== '' ? $san->text($t) : '';
+	}
+
+	/**
+	 * Bildunterschrift (mm_caption) — kann leer sein.
+	 */
+	public function getCaption(Page $item): string {
+		if(!$item->id || !$item->hasField('mm_caption')) return '';
+
+		return $this->wire->sanitizer->text((string) $item->mm_caption);
+	}
+
+	/**
+	 * True, wenn für Frontend-Ausgabe ein echtes Rasterbild (Pageimage) vorliegt.
+	 */
+	public function hasRenderableImage(Page $item): bool {
+		return $this->getPrimaryPageimage($item) instanceof Pageimage;
 	}
 
 	/** Font-Awesome-Markup für Typ-Icon (Admin). */
