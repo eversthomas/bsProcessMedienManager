@@ -8,7 +8,7 @@ Kurzüberblick für Reviews und Betrieb. Ergänzend: [`API.md`](API.md) (technis
 |----------|-----------|
 | Admin-Oberfläche und AJAX | Berechtigung **`medien-manager`** (`_requirePermission()` auf allen `execute*`-Einstiegen) |
 | Mutierende AJAX-Aktionen | **CSRF**-Token (`_validateCsrf()`), nur **POST** |
-| Lese-AJAX (Picker: `modal-items`, `thumb`, `kategorien`) | GET/POST ohne CSRF (keine Zustandsänderung) |
+| Lese-AJAX (Picker: `modal-items`, `thumb`, `kategorien`) | Eingeloggt + (**`medien-manager`** oder **`page-edit`**) — damit Seiten-Redakteure den Picker nutzen können; GET ohne CSRF (keine Zustandsänderung) |
 | Diagnose **`/test/`** | Nur **Superuser**, JSON ohne GET/POST-**Werte** (nur Schlüssel) |
 
 ## Eingaben und Uploads

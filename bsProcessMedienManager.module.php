@@ -38,7 +38,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public static function getModuleInfo(): array {
 		return [
 			'title'       => 'Medien Manager',
-			'version'     => 2.0,
+			'version'     => '2.0.1',
 			'summary'     => 'Zentrales Medienmanagement für Bilder, Videos und PDFs.',
 			'author'      => 'bsProcessMedienManager',
 			'icon'        => 'photo',
@@ -184,11 +184,11 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	 * URL: /setup/medienmanager/ajax/
 	 */
 	public function ___executeAjax(): string {
-		$this->_requirePermission();
-
 		$input  = $this->wire->input;
 		// POST (FormData vom Admin-JS) und GET (?action= für Picker) unterstützen
 		$action = $this->wire->sanitizer->name((string) ($input->post('action') ?: $input->get('action')));
+
+		$this->_requireAjaxAccess($action);
 
 		$this->log("AJAX action: $action");
 
@@ -732,6 +732,28 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		if(!$this->wire->user->hasPermission('medien-manager')) {
 			throw new WirePermissionException('Zugriff verweigert: Medien Manager');
 		}
+	}
+
+	/**
+	 * Picker im Seiten-Editor: Lese-AJAX für Redakteure mit page-edit; voller Manager weiterhin medien-manager.
+	 *
+	 * @param string $action bereinigter AJAX-Action-Name
+	 */
+	protected function _requireAjaxAccess(string $action): void {
+		$user = $this->wire->user;
+		if(!$user->isLoggedIn()) {
+			throw new WirePermissionException('Anmeldung erforderlich');
+		}
+
+		$pickerReadActions = ['modal-items', 'thumb', 'kategorien'];
+		if(in_array($action, $pickerReadActions, true)) {
+			if($user->hasPermission('medien-manager') || $user->hasPermission('page-edit')) {
+				return;
+			}
+			throw new WirePermissionException('Kein Zugriff auf die Medien-Auswahl');
+		}
+
+		$this->_requirePermission();
 	}
 
 	protected function _validateCsrf(): void {

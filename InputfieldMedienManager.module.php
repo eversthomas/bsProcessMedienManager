@@ -41,9 +41,10 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 		$config->styles->add($moduleUrl . 'css/medienmanager-inputfield.css');
 		$config->scripts->add($moduleUrl . 'js/medienmanager-inputfield.js');
 
-		// AJAX-URL und CSRF-Token für JS bereitstellen
-		$processPage = $this->wire->pages->get("template=admin, process=bsProcessMedienManager, include=all");
-		$ajaxUrl     = $processPage->id ? $processPage->url . 'ajax/' : '';
+		// Absolute AJAX-URL (wie bsProcessMedienManager::_injectJsConfig) — keine Abhängigkeit von pages->get(process),
+		// sonst leerer Pfad → JS fällt auf "./ajax/" relativ zur Seiten-URL zurück (HTML statt JSON).
+		$adminBase = rtrim($this->wire->config->urls->admin, '/');
+		$ajaxUrl   = $adminBase . '/setup/medienmanager/ajax/';
 
 		$config->js('InputfieldMedienManager', [
 			'ajaxUrl'      => $ajaxUrl,

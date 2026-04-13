@@ -269,6 +269,7 @@
 		});
 
 		xhr.open('GET', url, true);
+		xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
 		xhr.send();
 	}
 
@@ -281,6 +282,8 @@
 		var url = (cfg.ajaxUrl || './ajax/') + '?action=kategorien';
 		var xhr = new XMLHttpRequest();
 
+		xhr.open('GET', url, true);
+		xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
 		xhr.addEventListener('load', function() {
 			try {
 				var resp = JSON.parse(xhr.responseText);
@@ -297,7 +300,6 @@
 			}
 		});
 
-		xhr.open('GET', url, true);
 		xhr.send();
 	}
 
