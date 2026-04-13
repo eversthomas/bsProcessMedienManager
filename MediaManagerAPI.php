@@ -1,7 +1,14 @@
 <?php namespace ProcessWire;
 
+/**
+ * Zentrale Domänen-API für Medien-Items (Pages unter dem Manager-Root).
+ *
+ * Kapselt Suche, Erstellung, Dateien, Kategorien und Bildoperationen (Variationen, Master-Resize,
+ * WebP). Wird vom Process-Modul, Upload-Flows und optional von anderen Modulen genutzt.
+ */
 class MediaManagerAPI {
 
+	/** @var ProcessWire */
 	protected $wire;
 
 	const ROOT_TEMPLATE      = 'medienmanager-root';
@@ -35,12 +42,16 @@ class MediaManagerAPI {
 		$this->wire = $wire;
 	}
 
+	/**
+	 * Verwaltungs-Root-Page (versteckt unter Admin), Fallback aus Modul-Konfiguration.
+	 */
 	protected function _getRootPage(): Page {
 		$adminId = (int) $this->wire->config->adminRootPageID;
 		// Root wird bei install als Child von admin angelegt (Template i. d. R. „admin“, nicht medienmanager-root).
 		return $this->wire->pages->get("name=" . self::ROOT_NAME . ", parent=$adminId, include=all");
 	}
 
+	/** @return int Page-ID des Medien-Manager-Roots (Konfiguration oder ermittelt) */
 	public function getRootPageId(): int {
 		$config = $this->wire->modules->getModuleConfigData('bsProcessMedienManager');
 		$id = isset($config['rootPageID']) ? (int) $config['rootPageID'] : 0;
@@ -48,6 +59,11 @@ class MediaManagerAPI {
 		return (int) $id;
 	}
 
+	/**
+	 * Medien-Items mit optionalen Filtern (Typ, Kategorie, Volltextsuche).
+	 *
+	 * @param array{typ?: string, kategorie_id?: int, q?: string} $filters
+	 */
 	public function findMedia(array $filters = [], int $start = 0, int $limit = 24): PageArray {
 		$sanitizer = $this->wire->sanitizer;
 		$selector = "template=" . self::ITEM_TEMPLATE . ", include=hidden, sort=-created";
@@ -79,15 +95,22 @@ class MediaManagerAPI {
 		return $this->wire->pages->find($selector);
 	}
 
+	/** Einzelnes Medien-Item oder leere Page bei ungültiger ID. */
 	public function getMediaItem(int $id): Page {
 		return $this->wire->pages->get("id=" . (int)$id . ", template=" . self::ITEM_TEMPLATE . ", include=all");
 	}
 
+	/** Kategorie-Pages unter dem Root (oder unter $parentId). */
 	public function getKategorien(int $parentId = 0): PageArray {
 		if($parentId <= 0) $parentId = $this->getRootPageId();
 		return $this->wire->pages->find("parent=$parentId, template=" . self::KATEGORIE_TEMPLATE . ", include=hidden, sort=title");
 	}
 
+	/**
+	 * Neues Medien-Item inkl. optionaler Datei (Bild → mm_bild, sonst mm_datei).
+	 *
+	 * @param array{titel?: string, typ?: string, beschreibung?: string, tags?: string, kategorie_id?: int} $data
+	 */
 	public function createMediaItem(array $data, string $uploadedFile = '', string $originalName = ''): Page {
 		$sanitizer = $this->wire->sanitizer;
 		$rootId = $this->getRootPageId();
@@ -140,18 +163,6 @@ class MediaManagerAPI {
 	}
 
 	/**
-	 * Legt die feste Admin-/Grid-Vorschau als Pageimage-Variation auf der Festplatte an.
-	 *
-	 * ProcessWire erzeugt keine „Thumbnails“ als separaten Mechanismus: Variationen entstehen
-	 * durch $image->size($w, $h, $options) im files-Verzeichnis der Page (neben dem Original).
-	 * Optional am Feld mm_bild: maxWidth/maxHeight (ImageField) — skaliert dann die Hauptdatei
-	 * beim Upload, nicht als zweite Datei. Benannte Presets: $config->imageSizes (seit 3.0.151).
-	 *
-	 * Wichtig: Nach mm_bild->save() liefert pages->get() oft dieselbe gecachte Page ohne
-	 * frisch geladene Dateien — dann ist mm_bild leer und size() wird nie aufgerufen.
-	 * pages->getFresh() lädt die Page bewusst neu aus der DB (siehe PW-API pages->getFresh).
-	 */
-	/**
 	 * Nach `createVariants()`: WebP-Nebenversion für das primäre Bild (wie Bulk „WebP erzeugen“).
 	 */
 	protected function ensureWebpAfterVariants(Page $p): void {
@@ -166,6 +177,18 @@ class MediaManagerAPI {
 		}
 	}
 
+	/**
+	 * Legt die feste Admin-/Grid-Vorschau als Pageimage-Variation auf der Festplatte an.
+	 *
+	 * ProcessWire erzeugt keine „Thumbnails“ als separaten Mechanismus: Variationen entstehen
+	 * durch $image->size($w, $h, $options) im files-Verzeichnis der Page (neben dem Original).
+	 * Optional am Feld mm_bild: maxWidth/maxHeight (ImageField) — skaliert dann die Hauptdatei
+	 * beim Upload, nicht als zweite Datei. Benannte Presets: $config->imageSizes (seit 3.0.151).
+	 *
+	 * Wichtig: Nach mm_bild->save() liefert pages->get() oft dieselbe gecachte Page ohne
+	 * frisch geladene Dateien — dann ist mm_bild leer und size() wird nie aufgerufen.
+	 * pages->getFresh() lädt die Page bewusst neu aus der DB (siehe PW-API pages->getFresh).
+	 */
 	public function createVariants(Page $p): void {
 		$pid = (int) $p->id;
 		if($pid <= 0) return;
@@ -269,6 +292,7 @@ class MediaManagerAPI {
 		return (bool) $webp->create();
 	}
 
+	/** Vorschau-URL (Pageimage-Variation) mit festen Maßen. */
 	public function getThumbnailUrl(Page $item, int $width = self::SLOT_GRID_W, int $height = self::SLOT_GRID_H): string {
 		$img = $this->getPrimaryPageimage($item);
 		if(!$img instanceof Pageimage) return '';
@@ -297,17 +321,24 @@ class MediaManagerAPI {
 		return $this->getThumbnailUrl($item, $w, $h);
 	}
 
+	/** Normalisierter Typ: `bild` | `video` | `pdf`. */
 	public function getTypString(Page $item): string {
 		if (!$item->id || !$item->mm_typ) return 'bild';
 		return strtolower((string) $item->mm_typ->title);
 	}
 
-    public function getMediaTypeIconHtml(string $typ, string $spanClass = 'mm-grid-icon'): string {
-        $map = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o', 'bild' => 'fa-file-image-o'];
-        $icon = $map[$typ] ?? 'fa-file-o';
-        return "<span class='{$spanClass}'><i class='fa {$icon}'></i></span>";
-    }
+	/** Font-Awesome-Markup für Typ-Icon (Admin). */
+	public function getMediaTypeIconHtml(string $typ, string $spanClass = 'mm-grid-icon'): string {
+		$map  = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o', 'bild' => 'fa-file-image-o'];
+		$icon = $map[$typ] ?? 'fa-file-o';
+		return "<span class='{$spanClass}'><i class='fa {$icon}'></i></span>";
+	}
 
+	/**
+	 * Metadaten eines Medien-Items speichern (Titel, Typ, Kategorie, Tags, Alt, Caption …).
+	 *
+	 * @param array<string, mixed> $data
+	 */
 	public function saveMediaItem(int $id, array $data): Page {
 		$p = $this->getMediaItem($id);
 		if(!$p->id) return $p;
@@ -421,12 +452,14 @@ class MediaManagerAPI {
 		return false;
 	}
 
+	/** Medien-Item und zugehörige Dateien löschen. */
 	public function deleteMedia(int $id): bool {
 		$p = $this->getMediaItem($id);
 		if($p->id) return $this->wire->pages->delete($p, true);
 		return false;
 	}
 
+	/** Legt Felder, Templates und Root-Page an (Installation / Upgrade-Hook). */
 	public function install(): void {
 		$this->_installFelder();
 		$this->_installFieldgroups();
@@ -609,5 +642,14 @@ class MediaManagerAPI {
 		return true;
 	}
 
-	public function uninstall(): void {} // Implementierung bei Bedarf
+	/**
+	 * Deinstallation: keine Medien-Pages und keine Felder/Templates löschen (Daten behalten).
+	 *
+	 * Leert nur die Modul-Konfiguration (`bsProcessMedienManager`), damit eine Neuinstallation
+	 * nicht mit veralteter `rootPageID` o. Ä. arbeitet. Vollständiges Entfernen von Inhalten
+	 * bleibt manuell bzw. über separate Wartung (siehe README.md).
+	 */
+	public function uninstall(): void {
+		$this->wire->modules->saveModuleConfigData('bsProcessMedienManager', []);
+	}
 }

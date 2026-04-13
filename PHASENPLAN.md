@@ -128,9 +128,9 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 
 | # | Schritt | Beschreibung | Nach |
 |---|---------|--------------|-----|
-| 4.1 | `[ ]` | **Modularisierung / Aufteilung:** Zuständigkeiten trennen (z. B. AJAX-Handler-Klasse, Render-Helfer, Services, Traits) — `*_module.php` als dünnere Fassade; nachvollziehbare Ordner-/Namenskonvention für das **gesamte** Modul; keine unnötige Fragmentierung. | Phase 0 |
-| 4.2 | `[ ]` | **PHPDoc** an öffentlichen API-Methoden; kurze Abschnittskommentare bei komplexen Blöcken. | laufend / 4.1 |
-| 4.3 | `[ ]` | **Optional `API.md`** im Modul (nur wenn gewünscht): Kurzreferenz für Entwickler; mit **Phase 7** abgleichen, sobald Fieldtype & Template-API stehen. | 4.2, Phase 7 |
+| 4.1 | `[x]` | **Modularisierung / Aufteilung:** Zuständigkeiten trennen (z. B. AJAX-Handler-Klasse, Render-Helfer, Services, Traits) — `*_module.php` als dünnere Fassade; nachvollziehbare Ordner-/Namenskonvention für das **gesamte** Modul; keine unnötige Fragmentierung. | Phase 0 |
+| 4.2 | `[x]` | **PHPDoc** an öffentlichen API-Methoden; kurze Abschnittskommentare bei komplexen Blöcken. | laufend / 4.1 |
+| 4.3 | `[x]` | **Optional `API.md`** im Modul (nur wenn gewünscht): Kurzreferenz für Entwickler; mit **Phase 7** abgleichen, sobald Fieldtype & Template-API stehen. | 4.2, Phase 7 |
 
 ---
 
@@ -138,7 +138,7 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 
 | # | Schritt | Beschreibung | Nach |
 |---|---------|--------------|-----|
-| 5.1 | `[ ]` | **`uninstall`:** Strategie dokumentieren und optional implementieren (Daten löschen vs. nur Modul deaktivieren — oft Daten behalten). | Phase 0 |
+| 5.1 | `[x]` | **`uninstall`:** Strategie dokumentieren und optional implementieren (Daten löschen vs. nur Modul deaktivieren — oft Daten behalten). | Phase 0 |
 
 ---
 
@@ -179,6 +179,8 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 | 2026-04-13 | **Phase 2.5–2.9** im Code umgesetzt (UIkit-Card Toolbar+Bulk, Grid-Overlay, Liste, Meta-Infos, Edit-Zweispalter). Modulversion **1.5**. |
 | 2026-04-13 | Plan erweitert: **Phase 4** (Modularisierung gesamtes Modul), **Phase 6** (Sicherheit), **3.4** (Bulk-Bildoptimierung/WebP), **Phase 7** (Fieldtype + Template-Snippets wie Image/Images). |
 | 2026-04-13 | **Phase 3** im Code umgesetzt: Master-Resize/Crop (`ImageSizer`), Grid-Thumbs nach Bearbeitung, Bulk-WebP (`Pageimage::webp()`), Kurzevaluation in `PHASE3_NOTES.md`. Modulversion **1.6**. |
+| 2026-04-13 | **Phase 4** im Code umgesetzt: `lib/MediaManagerAjaxTrait.php`, `lib/MediaManagerRenderTrait.php`, PHPDoc an `MediaManagerAPI`, `API.md`. Modulversion **1.7**. |
+| 2026-04-13 | **Phase 5** umgesetzt: `README.md` (Bedienung + Erweiterungsabschnitte), Deinstallationsstrategie, `MediaManagerAPI::uninstall()` leert Modul-Config. Modulversion **1.8**. |
 
 ---
 
