@@ -447,6 +447,7 @@
 				var hEl = document.getElementById('mm-resize-h');
 				if (resp.width && wEl) wEl.value = resp.width;
 				if (resp.height && hEl) hEl.value = resp.height;
+				showAdminSuccess('Bild wurde gedreht.');
 			} else if (resp.message) {
 				showAdminError(resp.message);
 			}
@@ -470,6 +471,14 @@
 		formData.append('action', 'resize');
 		formData.append('width', w.value);
 		formData.append('height', h.value);
+		var modeEl = document.querySelector('input[name="mm_resize_mode"]:checked');
+		var cropping = '0';
+		if (modeEl && modeEl.value === '1') {
+			cropping = '1';
+		} else if (btn.dataset && btn.dataset.cropping === '1') {
+			cropping = '1';
+		}
+		formData.append('cropping', cropping);
 		if (csrf) formData.append(csrf.name, csrf.value);
 
 		ajaxPost(postUrl, formData, function(resp) {
@@ -478,6 +487,7 @@
 				if (img) img.src = resp.url + (resp.url.indexOf('?') === -1 ? '?' : '&') + 't=' + Date.now();
 				if (w) w.value = resp.width;
 				if (h) h.value = resp.height;
+				showAdminSuccess('Neue Größe wurde übernommen (Originaldatei angepasst).');
 			} else if (resp.message) {
 				showAdminError(resp.message);
 			}
@@ -494,6 +504,28 @@
 		} else {
 			alert(msg);
 		}
+	}
+
+	/** Erfolg im Backend (UIkit-Toast im Admin, sonst PW-Notices, sonst alert). */
+	function showAdminSuccess(msg) {
+		if (typeof UIkit !== 'undefined' && typeof UIkit.notification === 'function') {
+			UIkit.notification({ message: msg, status: 'success', pos: 'top-center', timeout: 6000 });
+			return;
+		}
+		if (window.ProcessWire && ProcessWire.notices && typeof ProcessWire.notices.add === 'function') {
+			ProcessWire.notices.add(msg);
+			return;
+		}
+		alert(msg);
+	}
+
+	/** Neutrale Hinweise (z. B. „nichts zu tun“). */
+	function showAdminInfo(msg) {
+		if (typeof UIkit !== 'undefined' && typeof UIkit.notification === 'function') {
+			UIkit.notification({ message: msg, status: 'primary', pos: 'top-center', timeout: 5500 });
+			return;
+		}
+		showAdminSuccess(msg);
 	}
 
 	function escapeHtml(str) {
@@ -551,6 +583,7 @@
 		var selAll = document.getElementById('mm-select-all');
 		var delBtn = document.getElementById('mm-bulk-delete');
 		var catBtn = document.getElementById('mm-bulk-apply-cat');
+		var webpBtn = document.getElementById('mm-bulk-webp');
 		var cfg = getCfg();
 		var ajaxUrl = cfg.ajaxUrl;
 
@@ -599,6 +632,40 @@
 						}
 					} else {
 						showAdminError('Massen-Löschen fehlgeschlagen');
+					}
+				});
+			});
+		}
+
+		if (webpBtn && ajaxUrl) {
+			webpBtn.addEventListener('click', function() {
+				var ids = getSelectedBulkIds();
+				if (!ids.length) {
+					showAdminError('Nichts ausgewählt.');
+					return;
+				}
+				var csrf = getCsrf();
+				var fd = new FormData();
+				fd.append('action', 'bulk-webp');
+				fd.append('ids', ids.join(','));
+				if (csrf) fd.append(csrf.name, csrf.value);
+				ajaxPost(ajaxUrl, fd, function(resp) {
+					if (resp.status === 'ok') {
+						var created = parseInt(resp.created, 10) || 0;
+						var skipped = parseInt(resp.skipped, 10) || 0;
+						var failed = parseInt(resp.failed, 10) || 0;
+						if (created > 0) {
+							var okMsg = 'WebP erfolgreich: ' + created + ' neue Datei(en) neben dem Original.';
+							if (skipped > 0) okMsg += ' (' + skipped + ' übersprungen.)';
+							if (failed > 0) okMsg += ' (' + failed + ' fehlgeschlagen.)';
+							showAdminSuccess(okMsg);
+						} else if (failed > 0) {
+							showAdminError('WebP konnte nicht erzeugt werden (' + failed + ' fehlgeschlagen).');
+						} else {
+							showAdminInfo('Keine neuen WebP-Dateien nötig: bereits vorhanden oder kein Bild (' + skipped + ' übersprungen).');
+						}
+					} else {
+						showAdminError(resp.message || 'WebP fehlgeschlagen');
 					}
 				});
 			});

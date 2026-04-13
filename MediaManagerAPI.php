@@ -129,6 +129,7 @@ class MediaManagerAPI {
 				if($safeBasename !== '') $p->mm_bild->last()->rename($safeBasename);
 				$p->save();
 				$this->createVariants($p);
+				$this->ensureWebpAfterVariants($p);
 			} else {
 				$p->mm_datei->add($uploadedFile);
 				if($safeBasename !== '') $p->mm_datei->last()->rename($safeBasename);
@@ -150,6 +151,21 @@ class MediaManagerAPI {
 	 * frisch geladene Dateien — dann ist mm_bild leer und size() wird nie aufgerufen.
 	 * pages->getFresh() lädt die Page bewusst neu aus der DB (siehe PW-API pages->getFresh).
 	 */
+	/**
+	 * Nach `createVariants()`: WebP-Nebenversion für das primäre Bild (wie Bulk „WebP erzeugen“).
+	 */
+	protected function ensureWebpAfterVariants(Page $p): void {
+		$pid = (int) $p->id;
+		if($pid <= 0) return;
+		$fresh = $this->wire->pages->getFresh($pid);
+		if(!$fresh->id) return;
+		$fresh->of(false);
+		$img = $this->getPrimaryPageimage($fresh);
+		if($img instanceof Pageimage) {
+			$this->ensureWebpForPageimage($img);
+		}
+	}
+
 	public function createVariants(Page $p): void {
 		$pid = (int) $p->id;
 		if($pid <= 0) return;
@@ -213,6 +229,44 @@ class MediaManagerAPI {
 		$bild->removeVariations();
 		$bild->getImageInfo(true);
 		return true;
+	}
+
+	/**
+	 * Skaliert oder beschneidet die **Originaldatei** (Master) per ImageSizer — keine nur neue Variation wie `Pageimage::size()`.
+	 *
+	 * @param bool $cropping True: Zielbox wird gefüllt (ggf. beschnitten); False: proportionales Einpassen in die Box.
+	 */
+	public function resizeMasterPageimage(Pageimage $bild, int $width, int $height, bool $cropping = false): bool {
+		$width  = max(1, $width);
+		$height = max(1, $height);
+		if(strtolower((string) $bild->ext) === 'svg') return false;
+		$filename = $bild->filename();
+		if(!is_file($filename) || !is_readable($filename)) return false;
+
+		$options = [
+			'cropping'  => $cropping,
+			'upscaling' => false,
+		];
+		$sizer = new ImageSizer($filename, $options);
+		$this->wire->wire($sizer);
+		if(!$sizer->resize($width, $height)) {
+			return false;
+		}
+		$bild->removeVariations();
+		$bild->getImageInfo(true);
+		return true;
+	}
+
+	/**
+	 * Erzeugt eine .webp-Nebenversion falls die Engine es unterstützt und die Datei noch fehlt.
+	 *
+	 * @return bool True wenn WebP existiert oder neu erzeugt wurde
+	 */
+	public function ensureWebpForPageimage(Pageimage $img): bool {
+		if(strtolower((string) $img->ext) === 'svg') return false;
+		$webp = $img->webp();
+		if($webp->exists()) return true;
+		return (bool) $webp->create();
 	}
 
 	public function getThumbnailUrl(Page $item, int $width = self::SLOT_GRID_W, int $height = self::SLOT_GRID_H): string {
@@ -340,6 +394,7 @@ class MediaManagerAPI {
 			if(!$img->replaceFile($tmpPath, true)) return false;
 			$item->save();
 			$this->createVariants($item);
+			$this->ensureWebpAfterVariants($item);
 			return true;
 		}
 		$file = $this->getPrimaryNonImageFile($item);

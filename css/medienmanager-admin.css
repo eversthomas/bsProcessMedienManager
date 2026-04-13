@@ -649,11 +649,18 @@
 }
 
 .mm-imageedit-toolbar {
-	width: 220px;
+	width: 320px;
 	flex-shrink: 0;
 	display: flex;
 	flex-direction: column;
 	gap: 20px;
+}
+
+.mm-imageedit-section-title {
+	font-size: 13px;
+	font-weight: 600;
+	margin: 0 0 4px;
+	color: #333;
 }
 
 .mm-imageedit-rotate,
@@ -662,6 +669,40 @@
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+}
+
+.mm-imageedit-mode {
+	border: 0;
+	padding: 0;
+	margin: 4px 0 4px;
+}
+
+.mm-imageedit-mode legend {
+	font-size: 12px;
+	font-weight: 600;
+	color: #555;
+	padding: 0;
+	margin-bottom: 8px;
+}
+
+.mm-imageedit-mode label {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	font-size: 12px;
+	color: #444;
+	line-height: 1.45;
+	cursor: pointer;
+	margin-bottom: 8px;
+}
+
+.mm-imageedit-mode label input[type="radio"] {
+	margin-top: 3px;
+	flex-shrink: 0;
+}
+
+.mm-imageedit-mode label span {
+	flex: 1;
 }
 
 .mm-imageedit-toolbar label {

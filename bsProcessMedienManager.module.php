@@ -26,7 +26,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public static function getModuleInfo(): array {
 		return [
 			'title'       => 'Medien Manager',
-			'version'     => 1.5,
+			'version'     => 1.6,
 			'summary'     => 'Zentrales Medienmanagement für Bilder, Videos und PDFs.',
 			'author'      => 'bsProcessMedienManager',
 			'icon'        => 'photo',
@@ -185,6 +185,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			'delete-kategorie',
 			'bulk-delete',
 			'bulk-set-kategorie',
+			'bulk-webp',
 			'duplicate-media',
 		];
 		if(in_array($action, $writingActions)) {
@@ -199,6 +200,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			case 'delete':           return $this->_ajaxDelete();
 			case 'bulk-delete':      return $this->_ajaxBulkDelete();
 			case 'bulk-set-kategorie': return $this->_ajaxBulkSetKategorie();
+			case 'bulk-webp':        return $this->_ajaxBulkWebp();
 			case 'duplicate-media':  return $this->_ajaxDuplicateMedia();
 			case 'kategorien':       return $this->_ajaxKategorien();
 			case 'save-kategorie':   return $this->_ajaxSaveKategorie();
@@ -524,6 +526,13 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 				$this->log('Rotation fehlgeschlagen für Pageimage ' . $bild->filename, true);
 				return json_encode(['status' => 'error', 'message' => 'Rotation fehlgeschlagen']);
 			}
+			$this->api()->createVariants($this->api()->getMediaItem($item->id));
+			$itemFresh = $this->api()->getMediaItem($item->id);
+			$itemFresh->of(false);
+			$bild = $this->api()->getPrimaryPageimage($itemFresh);
+			if(!$bild instanceof Pageimage) {
+				return json_encode(['status' => 'error', 'message' => 'Kein Bild']);
+			}
 			$bust = (string) time();
 			return json_encode(['status' => 'ok', 'url' => $bild->url . '?cb=' . $bust, 'width' => $bild->width, 'height' => $bild->height]);
 		}
@@ -533,17 +542,30 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			header('Content-Type: application/json; charset=utf-8');
 			$w = max(1, (int) $input->post('width'));
 			$h = max(1, (int) $input->post('height'));
+			$cropRaw = strtolower(trim((string) $input->post('cropping')));
+			$cropping = ($cropRaw === '1' || $cropRaw === 'true' || $cropRaw === 'yes');
 			$item->of(false);
 			$bild = $this->api()->getPrimaryPageimage($item);
 			if(!$bild instanceof Pageimage) {
 				return json_encode(['status' => 'error', 'message' => 'Kein Bild']);
 			}
-			$sized = $bild->size($w, $h);
+			if(!$this->api()->resizeMasterPageimage($bild, $w, $h, $cropping)) {
+				$this->log('Master-Resize fehlgeschlagen für Pageimage ' . $bild->filename, true);
+				return json_encode(['status' => 'error', 'message' => 'Größenänderung fehlgeschlagen']);
+			}
+			$this->api()->createVariants($this->api()->getMediaItem($item->id));
+			$itemFresh = $this->api()->getMediaItem($item->id);
+			$itemFresh->of(false);
+			$bild = $this->api()->getPrimaryPageimage($itemFresh);
+			if(!$bild instanceof Pageimage) {
+				return json_encode(['status' => 'error', 'message' => 'Kein Bild']);
+			}
+			$bust = (string) time();
 			return json_encode([
 				'status' => 'ok',
-				'url'    => $sized->url,
-				'width'  => $sized->width,
-				'height' => $sized->height,
+				'url'    => $bild->url . '?cb=' . $bust,
+				'width'  => $bild->width,
+				'height' => $bild->height,
 			]);
 		}
 
@@ -738,6 +760,43 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		]);
 	}
 
+	/**
+	 * WebP-Nebenversion für ausgewählte Bild-Items (primäres Pageimage); Videos/PDFs werden übersprungen.
+	 */
+	protected function _ajaxBulkWebp(): string {
+		$input = $this->wire->input;
+		$raw   = (string) $input->post('ids');
+		$ids   = array_filter(array_map('intval', explode(',', $raw)));
+		$created = 0;
+		$skipped = 0;
+		$failed  = 0;
+		foreach($ids as $id) {
+			if($id <= 0) continue;
+			$p = $this->api()->getMediaItem($id);
+			if(!$p->id) continue;
+			$img = $this->api()->getPrimaryPageimage($p);
+			if(!$img instanceof Pageimage) {
+				$skipped++;
+				continue;
+			}
+			if($img->webp()->exists()) {
+				$skipped++;
+				continue;
+			}
+			if($this->api()->ensureWebpForPageimage($img)) {
+				$created++;
+			} else {
+				$failed++;
+			}
+		}
+		return json_encode([
+			'status'  => 'ok',
+			'created' => $created,
+			'skipped' => $skipped,
+			'failed'  => $failed,
+		]);
+	}
+
 	protected function _ajaxBulkSetKategorie(): string {
 		$input = $this->wire->input;
 		$raw   = (string) $input->post('ids');
@@ -925,6 +984,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 					<span class='mm-bulk-count uk-text-meta uk-margin-small-right' id='mm-bulk-count'>0 von {$pageItemCount} ausgewählt</span>
 					<select id='mm-bulk-kategorie' class='uk-select uk-form-small mm-bulk-select uk-margin-small-right'>{$bulkKat}</select>
 					<button type='button' id='mm-bulk-apply-cat' class='uk-button uk-button-default uk-button-small uk-margin-small-right'><i class='fa fa-folder'></i> Kategorie setzen</button>
+					<button type='button' id='mm-bulk-webp' class='uk-button uk-button-default uk-button-small uk-margin-small-right' title='Nur Bilder: .webp neben dem Original (ProcessWire)'><i class='fa fa-file-image-o'></i> WebP erzeugen</button>
 					<button type='button' id='mm-bulk-delete' class='uk-button uk-button-danger uk-button-small'><i class='fa fa-trash'></i> Auswahl löschen</button>
 				</div>
 			</div>
@@ -1294,6 +1354,8 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			</div>
 			<div class='mm-imageedit-toolbar'>
 				<div class='mm-imageedit-rotate'>
+					<p class='mm-imageedit-section-title'>Drehen</p>
+					<p class='mm-hint'>Klick dreht die <strong>Originaldatei</strong> (nicht nur die Vorschau).</p>
 					<button type='button' class='ui-button mm-rotate-btn' data-degrees='-90' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "'>
 						<i class='fa fa-rotate-left'></i> 90° links
 					</button>
@@ -1305,10 +1367,17 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 					</button>
 				</div>
 				<div class='mm-imageedit-resize'>
+					<p class='mm-imageedit-section-title'>Größe &amp; Zuschnitt</p>
+					<p class='mm-hint'>Zielmaße in Pixel eingeben, Modus wählen, dann <strong>Größe übernehmen</strong>. Die hochgeladene Datei wird <strong>dauerhaft</strong> angepasst (kein zusätzliches „Export-Bild“).</p>
 					<label>Breite (px): <input type='number' id='mm-resize-w' value='{$bild->width}' min='1' class='uk-input'></label>
 					<label>Höhe (px): <input type='number' id='mm-resize-h' value='{$bild->height}' min='1' class='uk-input'></label>
+					<fieldset class='mm-imageedit-mode'>
+						<legend>Wie soll das Bild in dieses Format passen?</legend>
+						<label><input type='radio' name='mm_resize_mode' value='0' checked> <span><strong>Einpassen</strong> — gesamtes Bild sichtbar, Seitenverhältnis bleibt (Innenraum der Box, ggf. schmaler als angegeben).</span></label>
+						<label><input type='radio' name='mm_resize_mode' value='1'> <span><strong>Zuschneiden</strong> — Rahmen wird komplett gefüllt, überstehende Ränder werden abgeschnitten.</span></label>
+					</fieldset>
 					<button type='button' class='ui-button mm-resize-btn' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "'>
-						<i class='fa fa-expand'></i> Größe ändern
+						<i class='fa fa-check'></i> Größe übernehmen
 					</button>
 				</div>
 				<div class='mm-imageedit-actions'>

@@ -115,10 +115,10 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 
 | # | Schritt | Beschreibung | Nach |
 |---|---------|--------------|-----|
-| 3.1 | `[ ]` | **Rotation/Resize review:** Sicherstellen, dass Operationen auf dem Original/`Pageimage` laufen und Vorschau/Cache-Busting stimmt. | Phase 0 |
-| 3.2 | `[ ]` | **Zuschneiden (Crop):** Über PW-API (z. B. `size()` mit Cropping, oder passende Optionen) + einfache UI — Umfang pragmatisch halten. | 3.1 |
-| 3.3 | `[ ]` | **Externe Lib nur falls nötig:** Evaluation dokumentieren; wenn ja, eine Abhängigkeit mit Begründung. | bei Bedarf |
-| 3.4 | `[ ]` | **Bulk: Bilder nachträglich optimieren** (z. B. **WebP-Variante** neben dem Original, oder feste Ausgabe-Presets): Auswahl im Grid/Liste; serverseitig nur mit vorhandenen PW-/ImageSizer- bzw. GD/Imagick-Möglichkeiten; klare Regeln (wann neu berechnen, Speicherort, Fallback für ältere Browser). Optional abhängig von Phase 3.1. | 3.1, Phase 2.2 |
+| 3.1 | `[x]` | **Rotation/Resize review:** Sicherstellen, dass Operationen auf dem Original/`Pageimage` laufen und Vorschau/Cache-Busting stimmt. | Phase 0 |
+| 3.2 | `[x]` | **Zuschneiden (Crop):** Über PW-API (z. B. `size()` mit Cropping, oder passende Optionen) + einfache UI — Umfang pragmatisch halten. | 3.1 |
+| 3.3 | `[x]` | **Externe Lib nur falls nötig:** Evaluation dokumentieren; wenn ja, eine Abhängigkeit mit Begründung. | bei Bedarf |
+| 3.4 | `[x]` | **Bulk: Bilder nachträglich optimieren** (z. B. **WebP-Variante** neben dem Original, oder feste Ausgabe-Presets): Auswahl im Grid/Liste; serverseitig nur mit vorhandenen PW-/ImageSizer- bzw. GD/Imagick-Möglichkeiten; klare Regeln (wann neu berechnen, Speicherort, Fallback für ältere Browser). Optional abhängig von Phase 3.1. | 3.1, Phase 2.2 |
 
 ---
 
@@ -178,6 +178,7 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 | 2026-04-13 | **Phase 2** um UX-Arbeitspakete erweitert (2.5–2.9): UIkit-Oberfläche Grid/Bulk/Edit, Listenansicht, Polish; keine neue Phasennummerierung. |
 | 2026-04-13 | **Phase 2.5–2.9** im Code umgesetzt (UIkit-Card Toolbar+Bulk, Grid-Overlay, Liste, Meta-Infos, Edit-Zweispalter). Modulversion **1.5**. |
 | 2026-04-13 | Plan erweitert: **Phase 4** (Modularisierung gesamtes Modul), **Phase 6** (Sicherheit), **3.4** (Bulk-Bildoptimierung/WebP), **Phase 7** (Fieldtype + Template-Snippets wie Image/Images). |
+| 2026-04-13 | **Phase 3** im Code umgesetzt: Master-Resize/Crop (`ImageSizer`), Grid-Thumbs nach Bearbeitung, Bulk-WebP (`Pageimage::webp()`), Kurzevaluation in `PHASE3_NOTES.md`. Modulversion **1.6**. |
 
 ---
 
