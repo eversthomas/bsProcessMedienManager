@@ -12,41 +12,86 @@
 	'use strict';
 
 	// -----------------------------------------------------------------------
+	// Konfiguration
+	// Liest ajaxUrl aus window.bsProcessMedienManager (gesetzt via PHP).
+	// CSRF-Token wird aus ProcessWire.config gelesen — dieser ist immer
+	// aktuell und wird von PW selbst in den <head> geschrieben.
+	// -----------------------------------------------------------------------
+
+	function getCfg() {
+		return window.bsProcessMedienManager || {};
+	}
+
+	/**
+	 * Aktuellen CSRF-Token aus ProcessWire.config.SessionCSRF lesen.
+	 * PW schreibt diesen automatisch in den <head> als ProcessWire.config.
+	 * Fallback: aus dem ersten gefundenen Hidden-Input im DOM.
+	 *
+	 * @returns {{name: string, value: string}|null}
+	 */
+	function getCsrf() {
+        var cfg = getCfg();
+        if (cfg.csrfName && cfg.csrfVal) {
+            return { name: cfg.csrfName, value: cfg.csrfVal };
+        }
+        // Fallback: Hidden-Input im DOM
+        var inp = document.querySelector('input[name^="TOKEN"]');
+        if (inp) return { name: inp.name, value: inp.value };
+        return null;
+    }
+
+	/**
+	 * Zentraler AJAX-POST mit X-Requested-With-Header.
+	 * ProcessWire setzt $config->ajax nur wenn dieser Header gesetzt ist.
+	 *
+	 * @param {string}   url
+	 * @param {FormData} formData
+	 * @param {Function} callback
+	 */
+	function ajaxPost(url, formData, callback) {
+		var xhr = new XMLHttpRequest();
+		xhr.addEventListener('load', function() {
+			try {
+				callback(JSON.parse(xhr.responseText));
+			} catch (e) {
+				showAdminError('Ungültige Server-Antwort');
+			}
+		});
+		xhr.addEventListener('error', function() {
+			showAdminError('Netzwerkfehler');
+		});
+		xhr.open('POST', url, true);
+		xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+		xhr.send(formData);
+	}
+
+	// -----------------------------------------------------------------------
 	// Upload-Modal
 	// -----------------------------------------------------------------------
 
-	/**
-	 * Upload-Modal initialisieren.
-	 */
 	function initUploadModal() {
-		var uploadBtn  = document.getElementById('mm-upload-btn');
-		var modal      = document.getElementById('mm-upload-modal');
+		var uploadBtn = document.getElementById('mm-upload-btn');
+		var modal     = document.getElementById('mm-upload-modal');
 		if (!uploadBtn || !modal) return;
 
-		var closeBtn   = modal.querySelector('.mm-modal-close');
-		var cancelBtn  = modal.querySelector('.mm-modal-cancel');
-		var submitBtn  = modal.querySelector('.mm-upload-submit');
-		var dropZone   = document.getElementById('mm-drop-zone');
-		var fileInput  = document.getElementById('mm-file-input');
+		var closeBtn  = modal.querySelector('.mm-modal-close');
+		var cancelBtn = modal.querySelector('.mm-modal-cancel');
+		var submitBtn = modal.querySelector('.mm-upload-submit');
+		var dropZone  = document.getElementById('mm-drop-zone');
+		var fileInput = document.getElementById('mm-file-input');
 
-		// Modal öffnen
 		uploadBtn.addEventListener('click', function() {
 			modal.style.display = 'flex';
 		});
 
-		// Modal schließen
 		[closeBtn, cancelBtn].forEach(function(btn) {
 			if (btn) btn.addEventListener('click', closeUploadModal);
 		});
 
-		// Backdrop-Klick schließt Modal
 		modal.querySelector('.mm-modal-backdrop').addEventListener('click', closeUploadModal);
 
-		// Drag & Drop
 		if (dropZone && fileInput) {
-			dropZone.addEventListener('click', function() {
-				fileInput.click();
-			});
+			dropZone.addEventListener('click', function() { fileInput.click(); });
 
 			dropZone.addEventListener('dragover', function(e) {
 				e.preventDefault();
@@ -67,23 +112,13 @@
 			});
 
 			fileInput.addEventListener('change', function() {
-				if (fileInput.files.length) {
-					showSelectedFile(fileInput.files[0]);
-				}
+				if (fileInput.files.length) showSelectedFile(fileInput.files[0]);
 			});
 		}
 
-		// Upload absenden
-		if (submitBtn) {
-			submitBtn.addEventListener('click', submitUpload);
-		}
+		if (submitBtn) submitBtn.addEventListener('click', submitUpload);
 	}
 
-	/**
-	 * Ausgewählten Dateinamen im Drop-Bereich anzeigen.
-	 *
-	 * @param {File} file
-	 */
 	function showSelectedFile(file) {
 		var dropZone = document.getElementById('mm-drop-zone');
 		if (!dropZone) return;
@@ -91,63 +126,62 @@
 		if (para) para.textContent = file.name;
 	}
 
-	/**
-	 * Upload-Formular per XMLHttpRequest absenden.
-	 */
 	function submitUpload() {
-		var form      = document.getElementById('mm-upload-form');
-		var progress  = document.querySelector('.mm-upload-progress');
-		var bar       = document.querySelector('.mm-progress-fill');
-		var text      = document.querySelector('.mm-progress-text');
-		if (!form) return;
+        var form = document.getElementById('mm-upload-form');
+        var fileInput = document.getElementById('mm-file-input');
+        if (!form || !fileInput.files.length) return;
+    
+        var files = Array.from(fileInput.files);
+        var totalFiles = files.length;
+        var completed = 0;
+    
+        // UI-Elemente greifen
+        var progressContainer = document.querySelector('.mm-upload-progress'); // Existiert in deinem PHP
+        var progressBar = document.querySelector('.mm-progress-fill');
+        var progressText = document.querySelector('.mm-progress-text');
+    
+        if (progressContainer) progressContainer.style.display = 'flex';
+    
+        files.forEach(function(file) {
+            var formData = new FormData();
+            var csrf = getCsrf();
+            if (csrf) formData.append(csrf.name, csrf.value);
+            
+            // Wichtig: 'mm_datei' muss zum Namen im PHP passen
+            formData.append('mm_datei', file);
+            formData.append('titel', file.name);
+    
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', form.getAttribute('action'), true);
+            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    
+            xhr.onload = function() {
+                completed++;
+                
+                // Fortschritt berechnen (Anzahl fertiger Dateien)
+                var percent = Math.round((completed / totalFiles) * 100);
+                if (progressBar) progressBar.style.display = 'block';
+                if (progressBar) progressBar.style.width = percent + '%';
+                if (progressText) progressText.textContent = percent + '%';
+    
+                if (completed === totalFiles) {
+                    // Ein kleiner Moment für das Auge, dann Refresh
+                    setTimeout(function() {
+                        location.reload();
+                    }, 600);
+                }
+            };
+    
+            xhr.onerror = function() {
+                showAdminError('Fehler beim Upload von: ' + file.name);
+                completed++;
+                if (completed === totalFiles) location.reload();
+            };
+    
+            xhr.send(formData);
+        });
+    }
 
-		var formData = new FormData(form);
-		var xhr      = new XMLHttpRequest();
-
-		// Fortschrittsanzeige
-		if (progress) progress.style.display = 'flex';
-
-		xhr.upload.addEventListener('progress', function(e) {
-			if (e.lengthComputable) {
-				var pct = Math.round((e.loaded / e.total) * 100);
-				if (bar)  bar.style.width = pct + '%';
-				if (text) text.textContent = pct + '%';
-			}
-		});
-
-		xhr.addEventListener('load', function() {
-			if (xhr.status === 200) {
-				try {
-					var resp = JSON.parse(xhr.responseText);
-					if (resp.status === 'ok') {
-						// Grid-Item einfügen und Modal schließen
-						prependGridItem(resp);
-						closeUploadModal();
-						form.reset();
-					} else {
-						showAdminError(resp.message || 'Upload fehlgeschlagen');
-					}
-				} catch (e) {
-					showAdminError('Ungültige Server-Antwort');
-				}
-			} else {
-				showAdminError('Upload fehlgeschlagen (HTTP ' + xhr.status + ')');
-			}
-			if (progress) progress.style.display = 'none';
-		});
-
-		xhr.addEventListener('error', function() {
-			showAdminError('Netzwerkfehler beim Upload');
-			if (progress) progress.style.display = 'none';
-		});
-
-		xhr.open('POST', form.getAttribute('action'), true);
-		xhr.send(formData);
-	}
-
-	/**
-	 * Upload-Modal schließen und Formular zurücksetzen.
-	 */
 	function closeUploadModal() {
 		var modal = document.getElementById('mm-upload-modal');
 		if (modal) modal.style.display = 'none';
@@ -157,16 +191,11 @@
 	// Grid-Item nach Upload voranstellen
 	// -----------------------------------------------------------------------
 
-	/**
-	 * Neues Grid-Item am Anfang des Grids einfügen.
-	 *
-	 * @param {Object} data {id, titel, thumb}
-	 */
 	function prependGridItem(data) {
 		var grid = document.getElementById('mm-grid');
 		if (!grid) return;
 
-		var item = document.createElement('div');
+		var item        = document.createElement('div');
 		item.className  = 'mm-grid-item mm-grid-item-new';
 		item.dataset.id = data.id;
 
@@ -183,17 +212,11 @@
 			+ '<button type="button" class="mm-btn-delete" data-id="' + data.id + '" title="Löschen"><i class="fa fa-trash"></i></button>'
 			+ '</div>';
 
-		// Leere-Hinweis entfernen falls vorhanden
 		var empty = grid.querySelector('.mm-empty');
 		if (empty) empty.remove();
 
 		grid.insertBefore(item, grid.firstChild);
 
-		// Lösch-Button am neuen Item registrieren
-		var deleteBtn = item.querySelector('.mm-btn-delete');
-		if (deleteBtn) deleteBtn.addEventListener('click', handleDeleteClick);
-
-		// Kurze Highlight-Animation
 		requestAnimationFrame(function() {
 			item.classList.add('mm-item-highlight');
 			setTimeout(function() { item.classList.remove('mm-item-highlight'); }, 1500);
@@ -201,135 +224,121 @@
 	}
 
 	// -----------------------------------------------------------------------
-	// Löschen
+	// Löschen — Event-Delegation auf document
+	// Damit werden alle Buttons erfasst, unabhängig vom Ladezeitpunkt.
 	// -----------------------------------------------------------------------
 
-	/**
-	 * Alle Lösch-Buttons im Grid initialisieren.
-	 */
 	function initDeleteButtons() {
-		document.querySelectorAll('.mm-btn-delete, .mm-btn-delete-single').forEach(function(btn) {
-			btn.addEventListener('click', handleDeleteClick);
+		document.addEventListener('click', function(e) {
+			var btn = e.target.closest('.mm-btn-delete, .mm-btn-delete-single');
+			if (!btn) return;
+			handleDeleteClick(btn);
 		});
 	}
 
-	/**
-	 * Klick auf Lösch-Button verarbeiten.
-	 *
-	 * @param {Event} e
-	 */
-	function handleDeleteClick(e) {
-		var btn    = e.currentTarget;
-		var id     = btn.dataset.id;
-		var csrfN  = btn.dataset.csrfName;
-		var csrfV  = btn.dataset.csrfVal;
-
-		if (!confirm('Dieses Medium wirklich löschen?')) return;
-
-		// Ermittle AJAX-URL aus den globalen JS-Konfigurationsdaten
-		var cfg     = window.InputfieldMedienManager || {};
-		var ajaxUrl = cfg.ajaxUrl || './ajax/';
-
-		var formData = new FormData();
-		formData.append('action', 'delete');
-		formData.append('id', id);
-		if (csrfN) formData.append(csrfN, csrfV);
-
-		var xhr = new XMLHttpRequest();
-		xhr.addEventListener('load', function() {
-			try {
-				var resp = JSON.parse(xhr.responseText);
-				if (resp.status === 'ok') {
-					// Grid-Item entfernen
-					var item = document.querySelector('.mm-grid-item[data-id="' + id + '"]');
-					if (item) {
-						item.style.opacity = '0';
-						setTimeout(function() { item.remove(); }, 300);
-					}
-					// Auf Edit-Seite: zurück zur Übersicht
-					if (btn.classList.contains('mm-btn-delete-single')) {
-						window.location.href = '../';
-					}
-				} else {
-					showAdminError('Löschen fehlgeschlagen');
-				}
-			} catch (err) {
-				showAdminError('Ungültige Server-Antwort');
-			}
-		});
-
-		xhr.open('POST', ajaxUrl, true);
-		xhr.send(formData);
-	}
+	function handleDeleteClick(btn) {
+        var id = btn.dataset.id;
+        if (!confirm('Dieses Medium wirklich löschen?')) return;
+    
+        var cfg = getCfg();
+        // Sicherstellen, dass wir immer den /ajax/ Endpunkt treffen, 
+        // egal ob wir auf der Grid- oder Edit-Seite sind.
+        var ajaxUrl = cfg.ajaxUrl; 
+    
+        var formData = new FormData();
+        formData.append('action', 'delete'); // Das muss in PHP ankommen!
+        formData.append('id', id);
+    
+        var csrf = getCsrf();
+        if (csrf) formData.append(csrf.name, csrf.value);
+    
+        // DEBUG: Schau in die Konsole, was hier steht
+        console.log("Sende an: " + ajaxUrl, "Action: delete", "ID: " + id);
+    
+        ajaxPost(ajaxUrl, formData, function(resp) {
+            if (resp.status === 'ok') {
+                location.reload();
+                // Erfolg: Item aus dem Grid entfernen
+                var item = document.querySelector('.mm-grid-item[data-id="' + id + '"]');
+                if (item) {
+                    item.style.opacity = '0';
+                    setTimeout(function() { item.remove(); }, 300);
+                }
+                if (btn.classList.contains('mm-btn-delete-single')) {
+                    window.location.href = '../';
+                }
+            } else {
+                // FEHLER: Hier die Nachricht vom Server nutzen
+                // Wenn resp.message existiert, zeige sie an, sonst Standardtext
+                var errorMsg = resp.message ? resp.message : 'Löschen fehlgeschlagen';
+                showAdminError(errorMsg);
+            }
+        });
+    }
 
 	// -----------------------------------------------------------------------
 	// Bildbearbeitung (Rotate / Resize)
 	// -----------------------------------------------------------------------
 
-	/**
-	 * Rotate-Buttons initialisieren.
-	 */
 	function initImageEdit() {
-		document.querySelectorAll('.mm-rotate-btn').forEach(function(btn) {
-			btn.addEventListener('click', function() {
-				var id      = btn.dataset.id;
-				var degrees = btn.dataset.degrees;
-				var csrfN   = btn.dataset.csrfName;
-				var csrfV   = btn.dataset.csrfVal;
+		document.addEventListener('click', function(e) {
+			var rotateBtn = e.target.closest('.mm-rotate-btn');
+			if (rotateBtn) handleRotate(rotateBtn);
 
-				var formData = new FormData();
-				formData.append('action', 'rotate');
-				formData.append('id', id);
-				formData.append('degrees', degrees);
-				if (csrfN) formData.append(csrfN, csrfV);
-
-				ajaxPost('./imageedit/?id=' + id, formData, function(resp) {
-					if (resp.status === 'ok') {
-						var img = document.getElementById('mm-edit-img');
-						if (img) img.src = resp.url + '?t=' + Date.now();
-					}
-				});
-			});
+			var resizeBtn = e.target.closest('.mm-resize-btn');
+			if (resizeBtn) handleResize(resizeBtn);
 		});
+	}
 
-		// Resize-Button
-		var resizeBtn = document.querySelector('.mm-resize-btn');
-		if (resizeBtn) {
-			resizeBtn.addEventListener('click', function() {
-				var id    = resizeBtn.dataset.id;
-				var csrfN = resizeBtn.dataset.csrfName;
-				var csrfV = resizeBtn.dataset.csrfVal;
-				var w     = document.getElementById('mm-resize-w');
-				var h     = document.getElementById('mm-resize-h');
+	function handleRotate(btn) {
+		var id      = btn.dataset.id;
+		var degrees = btn.dataset.degrees;
+		var csrf    = getCsrf();
+		var cfg     = getCfg();
 
-				if (!w || !h) return;
+		var formData = new FormData();
+		formData.append('action', 'rotate');
+		formData.append('id', id);
+		formData.append('degrees', degrees);
+		if (csrf) formData.append(csrf.name, csrf.value);
 
-				var formData = new FormData();
-				formData.append('action', 'resize');
-				formData.append('id', id);
-				formData.append('width', w.value);
-				formData.append('height', h.value);
-				if (csrfN) formData.append(csrfN, csrfV);
+		ajaxPost(cfg.ajaxUrl + '../../imageedit/?id=' + id, formData, function(resp) {
+			if (resp.status === 'ok') {
+				var img = document.getElementById('mm-edit-img');
+				if (img) img.src = resp.url + '?t=' + Date.now();
+			}
+		});
+	}
 
-				ajaxPost('./imageedit/?id=' + id, formData, function(resp) {
-					if (resp.status === 'ok') {
-						var img = document.getElementById('mm-edit-img');
-						if (img) img.src = resp.url + '?t=' + Date.now();
-						if (w) w.value = resp.width;
-						if (h) h.value = resp.height;
-					}
-				});
-			});
-		}
+	function handleResize(btn) {
+		var id   = btn.dataset.id;
+		var csrf = getCsrf();
+		var cfg  = getCfg();
+		var w    = document.getElementById('mm-resize-w');
+		var h    = document.getElementById('mm-resize-h');
+		if (!w || !h) return;
+
+		var formData = new FormData();
+		formData.append('action', 'resize');
+		formData.append('id', id);
+		formData.append('width', w.value);
+		formData.append('height', h.value);
+		if (csrf) formData.append(csrf.name, csrf.value);
+
+		ajaxPost(cfg.ajaxUrl + '../../imageedit/?id=' + id, formData, function(resp) {
+			if (resp.status === 'ok') {
+				var img = document.getElementById('mm-edit-img');
+				if (img) img.src = resp.url + '?t=' + Date.now();
+				if (w) w.value = resp.width;
+				if (h) h.value = resp.height;
+			}
+		});
 	}
 
 	// -----------------------------------------------------------------------
-	// Lazy Loading (Intersection Observer)
+	// Lazy Loading
 	// -----------------------------------------------------------------------
 
-	/**
-	 * Lazy Loading für Grid-Bilder aktivieren.
-	 */
 	function initLazyLoad() {
 		if (!('IntersectionObserver' in window)) return;
 
@@ -346,8 +355,6 @@
 			});
 		}, { rootMargin: '200px' });
 
-		// Bilder mit loading="lazy" werden bereits nativ lazy geladen;
-		// dieser Observer dient als Fallback und für ältere Browser.
 		document.querySelectorAll('.mm-grid-thumb img[loading="lazy"]').forEach(function(img) {
 			observer.observe(img);
 		});
@@ -357,36 +364,7 @@
 	// Hilfsfunktionen
 	// -----------------------------------------------------------------------
 
-	/**
-	 * AJAX POST absenden.
-	 *
-	 * @param {string}   url
-	 * @param {FormData} formData
-	 * @param {Function} callback  Wird mit geparster Antwort aufgerufen
-	 */
-	function ajaxPost(url, formData, callback) {
-		var xhr = new XMLHttpRequest();
-		xhr.addEventListener('load', function() {
-			try {
-				callback(JSON.parse(xhr.responseText));
-			} catch (e) {
-				showAdminError('Ungültige Server-Antwort');
-			}
-		});
-		xhr.addEventListener('error', function() {
-			showAdminError('Netzwerkfehler');
-		});
-		xhr.open('POST', url, true);
-		xhr.send(formData);
-	}
-
-	/**
-	 * Fehlermeldung im Admin anzeigen.
-	 *
-	 * @param {string} msg
-	 */
 	function showAdminError(msg) {
-		// ProcessWire-eigenes Notices-System nutzen falls vorhanden
 		if (window.ProcessWire && ProcessWire.notices) {
 			ProcessWire.notices.addError(msg);
 		} else {
@@ -394,12 +372,6 @@
 		}
 	}
 
-	/**
-	 * HTML-Sonderzeichen escapen.
-	 *
-	 * @param {string} str
-	 * @returns {string}
-	 */
 	function escapeHtml(str) {
 		return String(str)
 			.replace(/&/g, '&amp;')
