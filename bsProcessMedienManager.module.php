@@ -129,9 +129,11 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public function ___execute(): string {
 		$this->_requirePermission();
 
-		$isAjax = $this->wire->config->ajax || !empty($_SERVER['HTTP_X_REQUESTED_WITH']);
+		$isAjax = $this->wire->config->ajax 
+            || !empty($_SERVER['HTTP_X_REQUESTED_WITH']);
         if($isAjax) {
-            ob_end_clean();
+            // Direkt ausgeben und beenden, nicht durch PW-Template routen
+            header('Content-Type: application/json; charset=utf-8');
             echo $this->___executeAjax();
             exit;
         }
@@ -160,46 +162,34 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	 * URL: /setup/medienmanager/ajax/
 	 */
 	public function ___executeAjax(): string {
-        $this->_requirePermission();
-    
-        $input  = $this->wire->input;
-        $action = $this->wire->sanitizer->name((string) ($input->post('action') ?: $input->get('action')));
-    
-        if(!$action) {
-            $this->log("AJAX aufgerufen ohne Action", true);
-            ob_end_clean();
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['status' => 'error', 'message' => 'Keine Aktion angegeben']);
-            exit;
-        }
-    
-        $this->log("AJAX action: $action");
-    
-        $writingActions = ['delete', 'save-kategorie', 'delete-kategorie'];
-        if(in_array($action, $writingActions)) {
-            $this->_validateCsrf();
-        }
-    
-        ob_end_clean();
-        header('Content-Type: application/json; charset=utf-8');
-    
-        $result = '';
-        switch($action) {
-            case 'modal-items':      $result = $this->_ajaxModalItems(); break;
-            case 'thumb':            $result = $this->_ajaxThumb(); break;
-            case 'delete':           $result = $this->_ajaxDelete(); break;
-            case 'kategorien':       $result = $this->_ajaxKategorien(); break;
-            case 'save-kategorie':   $result = $this->_ajaxSaveKategorie(); break;
-            case 'delete-kategorie': $result = $this->_ajaxDeleteKategorie(); break;
-            default:
-                $this->log("Unbekannte AJAX-Aktion: $action", true);
-                http_response_code(400);
-                $result = json_encode(['status' => 'error', 'message' => 'Unbekannte Aktion']);
-        }
-    
-        echo $result;
-        exit;
-    }
+		$this->_requirePermission();
+
+		$input  = $this->wire->input;
+		// POST (FormData vom Admin-JS) und GET (?action= für Picker) unterstützen
+		$action = $this->wire->sanitizer->name((string) ($input->post('action') ?: $input->get('action')));
+
+		$this->log("AJAX action: $action");
+
+		$writingActions = ['delete', 'save-kategorie', 'delete-kategorie'];
+		if(in_array($action, $writingActions)) {
+			$this->_validateCsrf();
+		}
+
+		header('Content-Type: application/json; charset=utf-8');
+
+		switch($action) {
+			case 'modal-items':      return $this->_ajaxModalItems();
+			case 'thumb':            return $this->_ajaxThumb();
+			case 'delete':           return $this->_ajaxDelete();
+			case 'kategorien':       return $this->_ajaxKategorien();
+			case 'save-kategorie':   return $this->_ajaxSaveKategorie();
+			case 'delete-kategorie': return $this->_ajaxDeleteKategorie();
+			default:
+				$this->log("Unbekannte AJAX-Aktion: $action", true);
+				http_response_code(400);
+				return json_encode(['status' => 'error', 'message' => 'Unbekannte Aktion']);
+		}
+	}
 	
 	public function ___executeTest(): string {
         header('Content-Type: application/json; charset=utf-8');
@@ -213,60 +203,61 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
     }
 
 	/**
-     * Upload-Handler.
-     * URL: /setup/medienmanager/upload/
-     */
-    public function ___executeUpload(): string {
-        $this->_requirePermission();
-        $this->_validateCsrf();
-    
-        // 1. Alle bisherigen Puffer leeren und stoppen
-        while (ob_get_level() > 0) {
-            ob_end_clean();
-        }
-    
-        $input     = $this->wire->input;
-        $sanitizer = $this->wire->sanitizer;
-    
-        // Sicherheitscheck: Falls das JS mm_datei statt mm_datei[] schickt
-        $fileData = $_FILES['mm_datei'] ?? null;
-    
-        if(!$fileData || empty($fileData['tmp_name'])) {
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode(['status' => 'error', 'message' => 'Keine Datei empfangen']);
-            exit;
-        }
-    
-        $uploadedFile = $fileData['tmp_name'];
-        $originalName = $fileData['name'];
-        $ext          = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-    
-        $data = [
-            'titel'        => $sanitizer->text($input->post('titel') ?: pathinfo($originalName, PATHINFO_FILENAME)),
-            'typ'          => $this->_extToTyp($ext),
-            'kategorie_id' => (int) $input->post('kategorie_id'),
-        ];
-    
-        $item = $this->api()->createMediaItem($data, $uploadedFile);
-    
-        // 2. Header setzen und NUR das JSON ausgeben
-        header('Content-Type: application/json; charset=utf-8');
-        
-        if($item && $item->id) {
-            // Wir laden das Item frisch, um sicherzugehen, dass alle Felder (mm_titel) da sind
-            $item->of(true); 
-            echo json_encode([
-                'status' => 'ok',
-                'id'     => $item->id,
-                'titel'  => $sanitizer->entities($item->mm_titel ?: $item->title),
-                'thumb'  => $this->api()->getThumbnailUrl($item),
-            ]);
-        } else {
-            echo json_encode(['status' => 'error', 'message' => 'API konnte Item nicht erstellen']);
-        }
-    
-        exit;
-    }
+	 * Upload-Handler.
+	 * URL: /setup/medienmanager/upload/
+	 */
+	public function ___executeUpload(): string {
+		$this->_requirePermission();
+		$this->_validateCsrf();
+
+		header('Content-Type: application/json; charset=utf-8');
+
+		$input     = $this->wire->input;
+		$sanitizer = $this->wire->sanitizer;
+
+		if(empty($_FILES['mm_datei']['tmp_name'])) {
+			$phpErrCode = $_FILES['mm_datei']['error'] ?? 'unbekannt';
+			$this->log("Upload fehlgeschlagen — kein tmp_name, PHP-Fehlercode: $phpErrCode", true);
+			http_response_code(400);
+			return json_encode(['status' => 'error', 'message' => 'Keine Datei übertragen (PHP-Code: ' . $phpErrCode . ')']);
+		}
+
+		$uploadedFile = $_FILES['mm_datei']['tmp_name'];
+		$originalName = $_FILES['mm_datei']['name'];
+		$ext          = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+		$allowed      = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'pdf'];
+
+		if(!in_array($ext, $allowed)) {
+			$this->log("Upload abgelehnt — Dateityp nicht erlaubt: $ext", true);
+			http_response_code(400);
+			return json_encode(['status' => 'error', 'message' => 'Dateityp nicht erlaubt: ' . $ext]);
+		}
+
+		$data = [
+			'titel'        => $sanitizer->text($input->post('titel') ?: pathinfo($originalName, PATHINFO_FILENAME)),
+			'beschreibung' => $sanitizer->textarea($input->post('beschreibung') ?: ''),
+			'tags'         => $sanitizer->text($input->post('tags') ?: ''),
+			'typ'          => $sanitizer->name($input->post('typ') ?: $this->_extToTyp($ext)),
+			'kategorie_id' => (int) $input->post('kategorie_id'),
+		];
+
+		$this->log("Upload gestartet: " . $data['titel'] . " ($ext)");
+		$item = $this->api()->createMediaItem($data, $uploadedFile, $originalName);
+
+		if(!$item->id) {
+			$this->log("Upload fehlgeschlagen — createMediaItem gab keine ID zurück", true);
+			http_response_code(500);
+			return json_encode(['status' => 'error', 'message' => 'Item konnte nicht erstellt werden']);
+		}
+
+		$this->log("Upload erfolgreich — Item-ID: " . $item->id);
+		return json_encode([
+			'status' => 'ok',
+			'id'     => $item->id,
+			'titel'  => $sanitizer->entities($item->mm_titel),
+			'thumb'  => $this->api()->getThumbnailUrl($item),
+		]);
+	}
 
 	/**
 	 * Edit-Formular.
@@ -504,18 +495,19 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	}
 
 	protected function _ajaxDelete(): string {
-        $id = (int) $this->wire->input->post('id');
-        $p = $this->wire->pages->get($id);
-        
-        if(!$p->id) return json_encode(['status' => 'error', 'message' => 'Page nicht gefunden']);
-        
-        try {
-            $this->wire->pages->delete($p, true); // true = rekursiv & alles löschen
-            return json_encode(['status' => 'ok']);
-        } catch (\Exception $e) {
-            return json_encode(['status' => 'error', 'message' => $e->getMessage()]);
-        }
-    }
+		$id = (int) $this->wire->input->post('id');
+		$this->log("AJAX-Löschversuch für ID: $id");
+
+		$success = $id ? $this->api()->deleteMedia($id) : false;
+
+		if(!$success) {
+			$this->log("AJAX-Löschen fehlgeschlagen für ID: $id", true);
+		} else {
+			$this->log("AJAX-Löschen erfolgreich für ID: $id");
+		}
+
+		return json_encode(['status' => $success ? 'ok' : 'error']);
+	}
 
 	protected function _ajaxKategorien(): string {
 		$kategorien = $this->api()->getKategorien();
@@ -693,7 +685,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 							<i class='fa fa-cloud-upload'></i>
 							<p>Datei hier ablegen oder klicken zum Auswählen</p>
 							<p class='mm-upload-hint'>Erlaubt: JPG, PNG, GIF, WEBP, MP4, MOV, PDF</p>
-							<input type='file' name='mm_datei[]' id='mm-file-input' accept='.jpg,.jpeg,.png,.gif,.webp,.mp4,.mov,.pdf' multiple>
+							<input type='file' name='mm_datei' id='mm-file-input' accept='.jpg,.jpeg,.png,.gif,.webp,.mp4,.mov,.pdf'>
 						</div>
 						<div class='uk-margin'>
 							<label>Titel</label>
@@ -710,12 +702,10 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 					</form>
 				</div>
 				<div class='mm-modal-footer'>
-					<div class='mm-upload-progress' style='display:none; width:100%; flex-direction:column; margin-bottom:10px;'>
-                        <div class='mm-progress-bar' style='width:100%; background:#eee; height:10px; border-radius:5px; overflow:hidden;'>
-                            <div class='mm-progress-fill' style='width:0%; height:100%; background:#2196F3; transition:width 0.3s;'></div>
-                        </div>
-                        <span class='mm-progress-text' style='font-size:12px; text-align:center;'>0%</span>
-                    </div>
+					<div class='mm-upload-progress' style='display:none'>
+						<div class='mm-progress-bar'><div class='mm-progress-fill'></div></div>
+						<span class='mm-progress-text'>0%</span>
+					</div>
 					<button type='button' class='mm-modal-cancel ui-button'>Abbrechen</button>
 					<button type='button' class='mm-upload-submit ui-button ui-state-default'><i class='fa fa-upload'></i> Hochladen</button>
 				</div>
@@ -724,95 +714,73 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	}
 
 	protected function _renderEditForm(Page $item): string {
-        $sanitizer  = $this->wire->sanitizer;
-        $csrfName   = $this->wire->session->CSRF->getTokenName();
-        $csrfVal    = $this->wire->session->CSRF->getTokenValue();
-        $kategorien = $this->api()->getKategorien();
-    
-        $vorschau = '';
-        $datei    = $item->mm_datei->first();
-        $typ      = $this->api()->getTypString($item);
-    
-        if($datei) {
-            // Falls der Typ "bild" ist, erzwingen wir die Bild-Vorschau
-            if($typ === 'bild') {
-                try {
-                    // Manuelle Instanz von Pageimage erstellen, damit size() verfügbar ist
-                    $img = new \ProcessWire\Pageimage($item->mm_datei, $datei->basename);
-                    
-                    // Prüfen, ob das Bild valide ist (Breite > 0)
-                    if($img && $img->width > 0) {
-                        $thumb = $img->size(400, 300, ['cropping' => false]);
-                        $vorschau = "<div class='mm-edit-preview' style='margin-bottom:20px; border:1px solid #ccc; display:inline-block;'>";
-                        $vorschau .= "<img src='" . $sanitizer->entities($thumb->url) . "' alt='Vorschau'>";
-                        $vorschau .= "</div>";
-                    } else {
-                        throw new \Exception("Kein gültiges Bild");
-                    }
-                } catch (\Exception $e) {
-                    // Fallback, falls die Bildgenerierung fehlschlägt
-                    $vorschau = "<div class='mm-edit-preview mm-edit-preview-file'><i class='fa fa-picture-o'></i><span>Vorschau nicht verfügbar</span></div>";
-                }
-            } else {
-                // Anzeige für PDFs oder Videos
-                $iconMap = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o'];
-                $icon = $iconMap[$typ] ?? 'fa-file-o';
-                $vorschau = "<div class='mm-edit-preview mm-edit-preview-file'><i class='fa $icon'></i><span>" . $sanitizer->entities($datei->basename) . "</span></div>";
-            }
-        }
-    
-        $katId = $item->mm_kategorie ? $item->mm_kategorie->id : 0;
-    
-        $katOptions = "<option value=''>Keine Kategorie</option>";
-        foreach($kategorien as $kat) {
-            $sel        = (int)$kat->id === (int)$katId ? ' selected' : '';
-            $katOptions .= "<option value='{$kat->id}'{$sel}>" . $sanitizer->entities($kat->title) . "</option>";
-        }
-    
-        $typOptions = '';
-        foreach(['bild' => 'Bild', 'video' => 'Video', 'pdf' => 'PDF'] as $val => $label) {
-            $sel        = $typ === $val ? ' selected' : '';
-            $typOptions .= "<option value='{$val}'{$sel}>{$label}</option>";
-        }
-    
-        return "
-        <div class='mm-edit-wrap'>
-            {$vorschau}
-            <form method='post' action='../save/' class='mm-edit-form'>
-                <input type='hidden' name='{$csrfName}' value='{$csrfVal}'>
-                <input type='hidden' name='id' value='{$item->id}'>
-                <div class='uk-margin'>
-                    <label class='uk-form-label'>Titel</label>
-                    <input type='text' name='mm_titel' value='" . $sanitizer->entities($item->mm_titel) . "' class='uk-input' required>
-                </div>
-                <div class='uk-margin'>
-                    <label class='uk-form-label'>Beschreibung</label>
-                    <textarea name='mm_beschreibung' class='uk-textarea' rows='3'>" . $sanitizer->entities($item->mm_beschreibung) . "</textarea>
-                </div>
-                <div class='uk-margin'>
-                    <label class='uk-form-label'>Tags <small>(kommagetrennt)</small></label>
-                    <input type='text' name='mm_tags' value='" . $sanitizer->entities($item->mm_tags) . "' class='uk-input'>
-                </div>
-                <div class='uk-margin'>
-                    <label class='uk-form-label'>Typ</label>
-                    <select name='mm_typ' class='uk-select'>{$typOptions}</select>
-                </div>
-                <div class='uk-margin'>
-                    <label class='uk-form-label'>Kategorie</label>
-                    <select name='mm_kategorie' class='uk-select'>{$katOptions}</select>
-                </div>
-                <div class='mm-edit-actions' style='margin-top:20px;'>
-                    <button type='submit' class='ui-button ui-state-default'><i class='fa fa-save'></i> Speichern</button>
-                    <a href='../' class='ui-button'>Abbrechen</a>"
-                    . ($typ === 'bild' ? " <a href='../imageedit/?id={$item->id}' class='ui-button'><i class='fa fa-crop'></i> Bild bearbeiten</a>" : '')
-                    . "
-                    <button type='button' class='mm-btn-delete-single ui-button' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "'>
-                        <i class='fa fa-trash'></i> Löschen
-                    </button>
-                </div>
-            </form>
-        </div>";
-    }
+		$sanitizer  = $this->wire->sanitizer;
+		$csrfName   = $this->wire->session->CSRF->getTokenName();
+		$csrfVal    = $this->wire->session->CSRF->getTokenValue();
+		$kategorien = $this->api()->getKategorien();
+
+		$vorschau = '';
+		$datei    = $item->mm_datei->first();
+		if($datei instanceof Pageimage) {
+			$thumb    = $datei->size(300, 225, ['cropping' => true]);
+			$vorschau = "<div class='mm-edit-preview'><img src='" . $sanitizer->entities($thumb->url) . "' alt=''></div>";
+		} elseif($datei) {
+			$vorschau = "<div class='mm-edit-preview mm-edit-preview-file'><i class='fa fa-file-o'></i><span>" . $sanitizer->entities($datei->basename) . "</span></div>";
+		}
+
+		$typ   = $this->api()->getTypString($item);
+		$katId = $item->mm_kategorie ? $item->mm_kategorie->id : 0;
+
+		$katOptions = "<option value=''>Keine Kategorie</option>";
+		foreach($kategorien as $kat) {
+			$sel        = $kat->id === $katId ? ' selected' : '';
+			$katOptions .= "<option value='{$kat->id}'{$sel}>" . $sanitizer->entities($kat->title) . "</option>";
+		}
+
+		$typOptions = '';
+		foreach(['bild' => 'Bild', 'video' => 'Video', 'pdf' => 'PDF'] as $val => $label) {
+			$sel        = $typ === $val ? ' selected' : '';
+			$typOptions .= "<option value='{$val}'{$sel}>{$label}</option>";
+		}
+
+		return "
+		<div class='mm-edit-wrap'>
+			{$vorschau}
+			<form method='post' action='../save/' class='mm-edit-form'>
+				<input type='hidden' name='{$csrfName}' value='{$csrfVal}'>
+				<input type='hidden' name='id' value='{$item->id}'>
+				<div class='uk-margin'>
+					<label class='uk-form-label'>Titel</label>
+					<input type='text' name='mm_titel' value='" . $sanitizer->entities($item->mm_titel) . "' class='uk-input' required>
+				</div>
+				<div class='uk-margin'>
+					<label class='uk-form-label'>Beschreibung</label>
+					<textarea name='mm_beschreibung' class='uk-textarea' rows='3'>" . $sanitizer->entities($item->mm_beschreibung) . "</textarea>
+				</div>
+				<div class='uk-margin'>
+					<label class='uk-form-label'>Tags <small>(kommagetrennt)</small></label>
+					<input type='text' name='mm_tags' value='" . $sanitizer->entities($item->mm_tags) . "' class='uk-input'>
+				</div>
+				<div class='uk-margin'>
+					<label class='uk-form-label'>Typ</label>
+					<select name='mm_typ' class='uk-select'>{$typOptions}</select>
+				</div>
+				<div class='uk-margin'>
+					<label class='uk-form-label'>Kategorie</label>
+					<select name='mm_kategorie' class='uk-select'>{$katOptions}</select>
+				</div>
+				<div class='mm-edit-actions'>
+					<button type='submit' class='ui-button ui-state-default'><i class='fa fa-save'></i> Speichern</button>
+					<a href='../' class='ui-button'>Abbrechen</a>"
+					. ($typ === 'bild' ? "<a href='../imageedit/?id={$item->id}' class='ui-button'><i class='fa fa-crop'></i> Bild bearbeiten</a>" : '')
+					. "
+					<button type='button' class='mm-btn-delete-single ui-button' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "'>
+						<i class='fa fa-trash'></i> Löschen
+					</button>
+				</div>
+			</form>
+		</div>";
+	}
 
 	protected function _renderImageEditor(Page $item, Pageimage $bild): string {
 		$sanitizer = $this->wire->sanitizer;

@@ -127,60 +127,54 @@
 	}
 
 	function submitUpload() {
-        var form = document.getElementById('mm-upload-form');
-        var fileInput = document.getElementById('mm-file-input');
-        if (!form || !fileInput.files.length) return;
-    
-        var files = Array.from(fileInput.files);
-        var totalFiles = files.length;
-        var completed = 0;
-    
-        // UI-Elemente greifen
-        var progressContainer = document.querySelector('.mm-upload-progress'); // Existiert in deinem PHP
-        var progressBar = document.querySelector('.mm-progress-fill');
-        var progressText = document.querySelector('.mm-progress-text');
-    
-        if (progressContainer) progressContainer.style.display = 'flex';
-    
-        files.forEach(function(file) {
-            var formData = new FormData();
-            var csrf = getCsrf();
-            if (csrf) formData.append(csrf.name, csrf.value);
-            
-            // Wichtig: 'mm_datei' muss zum Namen im PHP passen
-            formData.append('mm_datei', file);
-            formData.append('titel', file.name);
-    
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', form.getAttribute('action'), true);
-            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-    
-            xhr.onload = function() {
-                completed++;
-                
-                // Fortschritt berechnen (Anzahl fertiger Dateien)
-                var percent = Math.round((completed / totalFiles) * 100);
-                if (progressBar) progressBar.style.display = 'block';
-                if (progressBar) progressBar.style.width = percent + '%';
-                if (progressText) progressText.textContent = percent + '%';
-    
-                if (completed === totalFiles) {
-                    // Ein kleiner Moment für das Auge, dann Refresh
-                    setTimeout(function() {
-                        location.reload();
-                    }, 600);
-                }
-            };
-    
-            xhr.onerror = function() {
-                showAdminError('Fehler beim Upload von: ' + file.name);
-                completed++;
-                if (completed === totalFiles) location.reload();
-            };
-    
-            xhr.send(formData);
-        });
-    }
+		var form     = document.getElementById('mm-upload-form');
+		var progress = document.querySelector('.mm-upload-progress');
+		var bar      = document.querySelector('.mm-progress-fill');
+		var text     = document.querySelector('.mm-progress-text');
+		if (!form) return;
+
+		var formData = new FormData(form);
+		var xhr      = new XMLHttpRequest();
+
+		if (progress) progress.style.display = 'flex';
+
+		xhr.upload.addEventListener('progress', function(e) {
+			if (e.lengthComputable) {
+				var pct = Math.round((e.loaded / e.total) * 100);
+				if (bar)  bar.style.width = pct + '%';
+				if (text) text.textContent = pct + '%';
+			}
+		});
+
+		xhr.addEventListener('load', function() {
+			if (xhr.status === 200) {
+				try {
+					var resp = JSON.parse(xhr.responseText);
+					if (resp.status === 'ok') {
+						prependGridItem(resp);
+						closeUploadModal();
+						form.reset();
+					} else {
+						showAdminError(resp.message || 'Upload fehlgeschlagen');
+					}
+				} catch (e) {
+					showAdminError('Ungültige Server-Antwort');
+				}
+			} else {
+				showAdminError('Upload fehlgeschlagen (HTTP ' + xhr.status + ')');
+			}
+			if (progress) progress.style.display = 'none';
+		});
+
+		xhr.addEventListener('error', function() {
+			showAdminError('Netzwerkfehler beim Upload');
+			if (progress) progress.style.display = 'none';
+		});
+
+		xhr.open('POST', form.getAttribute('action'), true);
+		xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+		xhr.send(formData);
+	}
 
 	function closeUploadModal() {
 		var modal = document.getElementById('mm-upload-modal');
@@ -237,44 +231,37 @@
 	}
 
 	function handleDeleteClick(btn) {
-        var id = btn.dataset.id;
-        if (!confirm('Dieses Medium wirklich löschen?')) return;
-    
-        var cfg = getCfg();
-        // Sicherstellen, dass wir immer den /ajax/ Endpunkt treffen, 
-        // egal ob wir auf der Grid- oder Edit-Seite sind.
-        var ajaxUrl = cfg.ajaxUrl; 
-    
-        var formData = new FormData();
-        formData.append('action', 'delete'); // Das muss in PHP ankommen!
-        formData.append('id', id);
-    
-        var csrf = getCsrf();
-        if (csrf) formData.append(csrf.name, csrf.value);
-    
-        // DEBUG: Schau in die Konsole, was hier steht
-        console.log("Sende an: " + ajaxUrl, "Action: delete", "ID: " + id);
-    
-        ajaxPost(ajaxUrl, formData, function(resp) {
-            if (resp.status === 'ok') {
-                location.reload();
-                // Erfolg: Item aus dem Grid entfernen
-                var item = document.querySelector('.mm-grid-item[data-id="' + id + '"]');
-                if (item) {
-                    item.style.opacity = '0';
-                    setTimeout(function() { item.remove(); }, 300);
-                }
-                if (btn.classList.contains('mm-btn-delete-single')) {
-                    window.location.href = '../';
-                }
-            } else {
-                // FEHLER: Hier die Nachricht vom Server nutzen
-                // Wenn resp.message existiert, zeige sie an, sonst Standardtext
-                var errorMsg = resp.message ? resp.message : 'Löschen fehlgeschlagen';
-                showAdminError(errorMsg);
-            }
-        });
-    }
+		var id = btn.dataset.id;
+		if (!confirm('Dieses Medium wirklich löschen?')) return;
+
+		var cfg     = getCfg();
+		var ajaxUrl = cfg.ajaxUrl;
+		if (!ajaxUrl) {
+			showAdminError('AJAX-URL nicht konfiguriert');
+			return;
+		}
+
+		var csrf     = getCsrf();
+		var formData = new FormData();
+		formData.append('action', 'delete');
+		formData.append('id', id);
+		if (csrf) formData.append(csrf.name, csrf.value);
+
+		ajaxPost(ajaxUrl, formData, function(resp) {
+			if (resp.status === 'ok') {
+				var item = document.querySelector('.mm-grid-item[data-id="' + id + '"]');
+				if (item) {
+					item.style.opacity = '0';
+					setTimeout(function() { item.remove(); }, 300);
+				}
+				if (btn.classList.contains('mm-btn-delete-single')) {
+					window.location.href = '../';
+				}
+			} else {
+				showAdminError('Löschen fehlgeschlagen');
+			}
+		});
+	}
 
 	// -----------------------------------------------------------------------
 	// Bildbearbeitung (Rotate / Resize)
