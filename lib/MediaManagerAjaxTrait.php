@@ -6,6 +6,21 @@
  * @see bsProcessMedienManager::___executeAjax()
  */
 trait MediaManagerAjaxTrait {
+
+	/**
+	 * IDs aus Komma-Liste; zu viele Einträge → null (HTTP-Fehler durch Aufrufer).
+	 *
+	 * @return int[]|null
+	 */
+	protected function _requireBulkIds(string $raw): ?array {
+		$ids = array_values(array_unique(array_filter(array_map('intval', explode(',', $raw)))));
+		if(count($ids) > self::MAX_BULK_IDS) {
+			$this->log('Bulk: ID-Anzahl überschreitet Maximum', true);
+			return null;
+		}
+		return $ids;
+	}
+
 	protected function _ajaxModalItems(): string {
 		$input = $this->wire->input;
 		$start = (int) ($input->get('page') ?: 0) * $this->limit;
@@ -69,8 +84,11 @@ trait MediaManagerAjaxTrait {
 
 	protected function _ajaxBulkDelete(): string {
 		$input = $this->wire->input;
-		$raw   = (string) $input->post('ids');
-		$ids   = array_filter(array_map('intval', explode(',', $raw)));
+		$ids   = $this->_requireBulkIds((string) $input->post('ids'));
+		if($ids === null) {
+			http_response_code(400);
+			return json_encode(['status' => 'error', 'message' => 'Zu viele Einträge ausgewählt.']);
+		}
 		$deleted = 0;
 		foreach($ids as $id) {
 			if($id > 0 && $this->api()->deleteMedia($id)) $deleted++;
@@ -87,8 +105,11 @@ trait MediaManagerAjaxTrait {
 	 */
 	protected function _ajaxBulkWebp(): string {
 		$input = $this->wire->input;
-		$raw   = (string) $input->post('ids');
-		$ids   = array_filter(array_map('intval', explode(',', $raw)));
+		$ids   = $this->_requireBulkIds((string) $input->post('ids'));
+		if($ids === null) {
+			http_response_code(400);
+			return json_encode(['status' => 'error', 'message' => 'Zu viele Einträge ausgewählt.']);
+		}
 		$created = 0;
 		$skipped = 0;
 		$failed  = 0;
@@ -121,8 +142,11 @@ trait MediaManagerAjaxTrait {
 
 	protected function _ajaxBulkSetKategorie(): string {
 		$input = $this->wire->input;
-		$raw   = (string) $input->post('ids');
-		$ids   = array_filter(array_map('intval', explode(',', $raw)));
+		$ids   = $this->_requireBulkIds((string) $input->post('ids'));
+		if($ids === null) {
+			http_response_code(400);
+			return json_encode(['status' => 'error', 'message' => 'Zu viele Einträge ausgewählt.']);
+		}
 		$katId = (int) $input->post('kategorie_id');
 
 		$kat = null;

@@ -9,6 +9,7 @@ Zentrales **ProcessWire**-Modul für Bilder, Videos und PDFs: Upload, Metadaten,
 |----------|--------|
 | Diese **README** | Überblick, Bedienung, FAQ, Deinstallation — für Menschen & GitHub |
 | [`API.md`](API.md) | Technische Referenz (Klassen, AJAX, URLs) |
+| [`SECURITY.md`](SECURITY.md) | Sicherheits-Checkliste (Rechte, CSRF, Uploads) |
 | [`PHASENPLAN.md`](PHASENPLAN.md) | Roadmap und erledigte Phasen |
 
 ---
@@ -26,6 +27,8 @@ Zentrales **ProcessWire**-Modul für Bilder, Videos und PDFs: Upload, Metadaten,
 9. [Deinstallation und Daten](#deinstallation-und-daten)
 10. [Entwicklung](#entwicklung)
 
+Hinweis: Detaillierte Sicherheitsübersicht → [`SECURITY.md`](SECURITY.md).
+
 ---
 
 ## Repository-Struktur
@@ -42,6 +45,7 @@ bsProcessMedienManager/
 ├── js/ · css/
 ├── API.md
 ├── README.md
+├── SECURITY.md
 └── PHASENPLAN.md
 ```
 
@@ -132,6 +136,7 @@ Suchfeld berücksichtigt u. a. Titel, Tags und (falls vorhanden) Beschreibung, A
 
 | Version | Kurz |
 |---------|------|
+| 1.9 | Phase 6: CSRF+POST für Schreib-API, Upload-Limit (ini + MB-Kappe), Bulk-ID-Limit, `SECURITY.md`, Test-Endpoint ohne GET-Werte |
 | 1.8 | README (GitHub); Deinstallationsstrategie; Config-Cleanup bei Uninstall |
 | 1.7 | Traits unter `lib/`; `API.md`; PHPDoc API |
 | 1.6 | Bildbearbeitung Master-Datei, Bulk-WebP, … |
@@ -164,5 +169,6 @@ Vollständiges Entfernen von Inhalten nur geplant mit Backup und ggf. manuellem 
 | Datei | Thema |
 |-------|--------|
 | [`API.md`](API.md) | Klassen, Traits, AJAX, URLs |
+| [`SECURITY.md`](SECURITY.md) | Sicherheits-Checkliste |
 | [`PHASENPLAN.md`](PHASENPLAN.md) | Roadmap |
 | [`PHASE3_NOTES.md`](PHASE3_NOTES.md) | Bildpipeline / WebP (Kurznotiz) |

@@ -2,6 +2,8 @@
 
 Kurzübersicht über das **Bundle** (Process-Modul, API, Traits, Inputfield, Fieldtype). Detaillierte Template-Ausgabe (Frontend) folgt mit **Phase 7** (Fieldtype & Snippets).
 
+**Sicherheit:** [`SECURITY.md`](SECURITY.md) (Checkliste: Rechte, CSRF, Uploads, Logs).
+
 ## Verzeichnisaufbau
 
 | Pfad | Rolle |
@@ -13,6 +15,7 @@ Kurzübersicht über das **Bundle** (Process-Modul, API, Traits, Inputfield, Fie
 | `InputfieldMedienManager.module.php` | Backend-Feld-UI |
 | `FieldtypeMedienManager.module.php` | Feldspeicher (Referenz auf Medien-Items) |
 | `js/` · `css/` | Admin- und Inputfield-Assets |
+| `SECURITY.md` | Sicherheits-Checkliste |
 
 ## `MediaManagerAPI`
 
@@ -38,7 +41,7 @@ Basis: `{adminUrl}setup/medienmanager/`
 | Pfad | Zweck |
 |------|--------|
 | `./` | Grid/Liste |
-| `ajax/` | Zentraler AJAX-POST (`action` im Body oder GET) |
+| `ajax/` | Zentraler AJAX (`action`); schreibende Aktionen nur **POST** + CSRF |
 | `upload/` | Mehrfach-Upload (JSON) |
 | `edit/` | Bearbeiten |
 | `save/` | POST Speichern |
@@ -49,7 +52,7 @@ Basis: `{adminUrl}setup/medienmanager/`
 
 ## AJAX-Aktionen (`action`)
 
-Lesezugriffe ohne CSRF; schreibende Aktionen mit Session-CSRF.
+Lesezugriffe ohne CSRF. **Schreibende** Aktionen: Session-**CSRF** und nur **POST** (siehe `___executeAjax()`).
 
 | `action` | Kurzbeschreibung |
 |----------|------------------|
@@ -67,6 +70,10 @@ Lesezugriffe ohne CSRF; schreibende Aktionen mit Session-CSRF.
 ## Berechtigung
 
 `medien-manager` — siehe Modul `permissions` in `getModuleInfo()`.
+
+## Modul-Konfiguration
+
+Zusätzlich zu **Grid-Items pro Seite**: **Max. Upload-Größe pro Datei (MB)** — obere Kappe neben `php.ini` (`upload_max_filesize` / `post_max_size`). `0` = nur php.ini.
 
 ## Version
 

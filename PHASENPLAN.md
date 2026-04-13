@@ -148,9 +148,9 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 
 | # | Schritt | Beschreibung | Nach |
 |---|---------|--------------|-----|
-| 6.1 | `[ ]` | **Zugriff & Schreibaktionen:** `medien-manager`-Permission konsequent; **CSRF** bei allen mutierenden Requests (inkl. AJAX); keine privilegierten Aktionen ohne Session/Auth. | Phase 0 |
-| 6.2 | `[ ]` | **Eingaben & Uploads:** Dateitypen/Größen serverseitig enforce’n; Pfade und Benennung sanitizen; keine Ausführung hochgeladener Inhalte; wo nötig **Superuser**-Gates für riskante Diagnose-Endpunkte. | 6.1 |
-| 6.3 | `[ ]` | **Ausgabe & Betrieb:** Keine sensiblen Daten in Logs/JSON für Redakteure; **Security-Review**-Checkliste (kurz dokumentiert, z. B. in `API.md` oder Modul-README-Abschnitt). | 6.2 |
+| 6.1 | `[x]` | **Zugriff & Schreibaktionen:** `medien-manager`-Permission konsequent; **CSRF** bei allen mutierenden Requests (inkl. AJAX); keine privilegierten Aktionen ohne Session/Auth. | Phase 0 |
+| 6.2 | `[x]` | **Eingaben & Uploads:** Dateitypen/Größen serverseitig enforce’n; Pfade und Benennung sanitizen; keine Ausführung hochgeladener Inhalte; wo nötig **Superuser**-Gates für riskante Diagnose-Endpunkte. | 6.1 |
+| 6.3 | `[x]` | **Ausgabe & Betrieb:** Keine sensiblen Daten in Logs/JSON für Redakteure; **Security-Review**-Checkliste (kurz dokumentiert, z. B. in `API.md` oder Modul-README-Abschnitt). | 6.2 |
 
 ---
 
@@ -181,6 +181,7 @@ Dieses Dokument beschreibt die **geplante Reihenfolge** von Verbesserungen und E
 | 2026-04-13 | **Phase 3** im Code umgesetzt: Master-Resize/Crop (`ImageSizer`), Grid-Thumbs nach Bearbeitung, Bulk-WebP (`Pageimage::webp()`), Kurzevaluation in `PHASE3_NOTES.md`. Modulversion **1.6**. |
 | 2026-04-13 | **Phase 4** im Code umgesetzt: `lib/MediaManagerAjaxTrait.php`, `lib/MediaManagerRenderTrait.php`, PHPDoc an `MediaManagerAPI`, `API.md`. Modulversion **1.7**. |
 | 2026-04-13 | **Phase 5** umgesetzt: `README.md` (Bedienung + Erweiterungsabschnitte), Deinstallationsstrategie, `MediaManagerAPI::uninstall()` leert Modul-Config. Modulversion **1.8**. |
+| 2026-04-13 | **Phase 6** umgesetzt: Schreib-AJAX nur POST+CSRF, Upload-Größe (ini + Modul-MB), Bulk-ID-Limit 500, Test-JSON ohne GET-Werte, `SECURITY.md`. Modulversion **1.9**. |
 
 ---
 

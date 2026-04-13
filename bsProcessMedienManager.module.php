@@ -20,6 +20,9 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	use MediaManagerAjaxTrait;
 	use MediaManagerRenderTrait;
 
+	/** Obergrenze IDs pro Bulk-Aktion (Schutz vor überlangen Requests). */
+	protected const MAX_BULK_IDS = 500;
+
 	/** @var MediaManagerAPI|null */
 	protected ?MediaManagerAPI $api = null;
 
@@ -35,7 +38,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public static function getModuleInfo(): array {
 		return [
 			'title'       => 'Medien Manager',
-			'version'     => 1.8,
+			'version'     => 1.9,
 			'summary'     => 'Zentrales Medienmanagement für Bilder, Videos und PDFs.',
 			'author'      => 'bsProcessMedienManager',
 			'icon'        => 'photo',
@@ -199,6 +202,10 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		];
 		if(in_array($action, $writingActions)) {
 			$this->_validateCsrf();
+			if(($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+				http_response_code(405);
+				return json_encode(['status' => 'error', 'message' => 'Nur POST erlaubt.']);
+			}
 		}
 
 		header('Content-Type: application/json; charset=utf-8');
@@ -231,11 +238,12 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			throw new WirePermissionException('Nur Superuser');
 		}
 		header('Content-Type: application/json; charset=utf-8');
+		// Nur Schlüssel, keine Werte — vermeidet versehentliches Leaken von Tokens in der Query.
 		return json_encode([
 			'status' => 'ok',
 			'ajax'   => $this->wire->config->ajax,
 			'method' => $_SERVER['REQUEST_METHOD'] ?? '',
-			'get'    => $this->wire->input->get->getArray(),
+			'get'    => array_keys($this->wire->input->get->getArray()),
 			'post'   => array_keys($this->wire->input->post->getArray()),
 		]);
 	}
@@ -289,6 +297,19 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 					'message'  => 'Ungültige Upload-Datei',
 				];
 				continue;
+			}
+
+			$maxBytes = $this->_maxUploadBytesPerFile();
+			if($maxBytes > 0) {
+				$sz = @filesize($tmp);
+				if($sz !== false && $sz > $maxBytes) {
+					$results[] = [
+						'status'   => 'error',
+						'filename' => $origName,
+						'message'  => 'Datei zu groß (Limit: ' . wireBytesStr($maxBytes) . ').',
+					];
+					continue;
+				}
 			}
 
 			$ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
@@ -715,6 +736,53 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	/**
 	 * Lesbare Meldung zu PHP-Upload-Fehlercodes (inkl. Größenlimits php.ini).
 	 */
+	/**
+	 * Effektive Obergrenze pro Datei: min(php.ini upload_max_filesize, post_max_size) und optional Modul-Kappe.
+	 *
+	 * @return int Bytes; 0 = keine zusätzliche Prüfung (nur PHP)
+	 */
+	protected function _maxUploadBytesPerFile(): int {
+		$cfg   = $this->wire->modules->getModuleConfigData(__CLASS__);
+		$capMb = isset($cfg['uploadMaxMB']) ? (int) $cfg['uploadMaxMB'] : 0;
+		$iniUp = $this->_phpIniSizeToBytes((string) ini_get('upload_max_filesize'));
+		$iniPo = $this->_phpIniSizeToBytes((string) ini_get('post_max_size'));
+		$fromIni = 0;
+		if($iniUp > 0 && $iniPo > 0) {
+			$fromIni = min($iniUp, $iniPo);
+		} else {
+			$fromIni = $iniUp ?: $iniPo;
+		}
+		if($capMb > 0) {
+			$cap = $capMb * 1024 * 1024;
+			if($fromIni > 0) return min($cap, $fromIni);
+			return $cap;
+		}
+		return $fromIni;
+	}
+
+	/**
+	 * @param string $val z. B. "8M", "512K", "2G"
+	 */
+	protected function _phpIniSizeToBytes(string $val): int {
+		$val = trim($val);
+		if($val === '') return 0;
+		if(!preg_match('/^([0-9.]+)\s*([kmg])?$/i', $val, $m)) {
+			return (int) round((float) $val);
+		}
+		$num = (float) $m[1];
+		$unit = isset($m[2]) ? strtoupper($m[2]) : '';
+		switch($unit) {
+			case 'G':
+				return (int) round($num * 1024 * 1024 * 1024);
+			case 'M':
+				return (int) round($num * 1024 * 1024);
+			case 'K':
+				return (int) round($num * 1024);
+			default:
+				return (int) round($num);
+		}
+	}
+
 	protected function _uploadErrorMessage(int $code): string {
 		switch($code) {
 			case UPLOAD_ERR_INI_SIZE:
@@ -752,6 +820,16 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		$f->min         = 6;
 		$f->max         = 100;
 		$wrapper->add($f);
+
+		/** @var InputfieldInteger $f2 */
+		$f2 = $wire->modules->get('InputfieldInteger');
+		$f2->attr('name', 'uploadMaxMB');
+		$f2->label       = 'Max. Upload-Größe pro Datei (MB)';
+		$f2->description = 'Zusätzliche Obergrenze zum Schutz der Anwendung (0 = nur Limit aus php.ini: upload_max_filesize / post_max_size).';
+		$f2->attr('value', (int) ($data['uploadMaxMB'] ?? 0));
+		$f2->min         = 0;
+		$f2->max         = 2048;
+		$wrapper->add($f2);
 
 		return $wrapper;
 	}
