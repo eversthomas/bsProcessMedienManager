@@ -66,6 +66,12 @@ class MediaManagerAPI {
 			if($this->wire->fields->get('mm_beschreibung')) {
 				$suchTeile .= "|mm_beschreibung%=$q";
 			}
+			if($this->wire->fields->get('mm_alt')) {
+				$suchTeile .= "|mm_alt%=$q";
+			}
+			if($this->wire->fields->get('mm_caption')) {
+				$suchTeile .= "|mm_caption%=$q";
+			}
 			$selector .= ", $suchTeile";
 		}
 
@@ -268,8 +274,96 @@ class MediaManagerAPI {
 		if(array_key_exists('kategorie_id', $data)) {
 			$p->mm_kategorie = (int) $data['kategorie_id'] ?: null;
 		}
+		if(isset($data['alt']) && $p->hasField('mm_alt')) {
+			$p->mm_alt = $sanitizer->text((string) $data['alt']);
+		}
+		if(isset($data['caption']) && $p->hasField('mm_caption')) {
+			$p->mm_caption = $sanitizer->text((string) $data['caption']);
+		}
 		$p->save();
 		return $p;
+	}
+
+	/**
+	 * Öffentliche URL der primären Datei (für Einbindung im Frontend).
+	 */
+	public function getPublicFileUrl(Page $item): string {
+		$img = $this->getPrimaryPageimage($item);
+		if($img instanceof Pageimage) {
+			$u = $img->httpUrl ?? '';
+			return $u !== '' ? (string) $u : (string) $img->url;
+		}
+		$file = $this->getPrimaryNonImageFile($item);
+		if($file instanceof Pagefile) {
+			$u = $file->httpUrl ?? '';
+			return $u !== '' ? (string) $u : (string) $file->url;
+		}
+		return '';
+	}
+
+	/**
+	 * Dupliziert Medien-Page inkl. Dateien (Clone, nicht rekursiv).
+	 */
+	public function duplicateMediaItem(int $id): Page {
+		$p = $this->getMediaItem($id);
+		if(!$p->id) return $this->wire->pages->newNullPage();
+		$parent = $this->wire->pages->get($this->getRootPageId());
+		if(!$parent->id) return $this->wire->pages->newNullPage();
+		$copy = $this->wire->pages->clone($p, $parent, false);
+		if(!$copy->id) return $this->wire->pages->newNullPage();
+		$copy->of(false);
+		$base = (string) ($p->mm_titel ?: $p->title);
+		$copy->mm_titel = $base . ' (Kopie)';
+		$copy->title = $copy->mm_titel;
+		$copy->save();
+		return $copy;
+	}
+
+	/**
+	 * Primäre Datei (Bild oder Video/PDF) durch Upload ersetzen; Page-ID bleibt gleich.
+	 *
+	 * @return bool True bei Erfolg
+	 */
+	public function replacePrimaryFile(Page $item, string $tmpPath, string $originalName): bool {
+		if(!$item->id) return false;
+		if($tmpPath === '' || !is_uploaded_file($tmpPath)) return false;
+
+		$ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+
+		$item->of(false);
+		$img = $this->getPrimaryPageimage($item);
+		if($img instanceof Pageimage) {
+			$allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+			if(!in_array($ext, $allowed, true)) return false;
+			$oldExt = strtolower(pathinfo($img->filename(), PATHINFO_EXTENSION));
+			if(!$this->fileExtensionMatches($ext, $oldExt)) return false;
+			if(!$img->replaceFile($tmpPath, true)) return false;
+			$item->save();
+			$this->createVariants($item);
+			return true;
+		}
+		$file = $this->getPrimaryNonImageFile($item);
+		if($file instanceof Pagefile) {
+			$allowed = ['pdf', 'mp4', 'mov'];
+			if(!in_array($ext, $allowed, true)) return false;
+			$oldExt = strtolower(pathinfo($file->filename(), PATHINFO_EXTENSION));
+			if(!$this->fileExtensionMatches($ext, $oldExt)) return false;
+			if(!$file->replaceFile($tmpPath, true)) return false;
+			$item->save();
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * @param string $newExt Endung der neuen Datei (Kleinbuchstaben)
+	 * @param string $oldExt Endung der bestehenden Datei (Kleinbuchstaben)
+	 */
+	protected function fileExtensionMatches(string $newExt, string $oldExt): bool {
+		if($newExt === $oldExt) return true;
+		if($newExt === 'jpeg' && $oldExt === 'jpg') return true;
+		if($newExt === 'jpg' && $oldExt === 'jpeg') return true;
+		return false;
 	}
 
 	public function deleteMedia(int $id): bool {
@@ -294,6 +388,8 @@ class MediaManagerAPI {
 			'mm_bild' => ['type' => 'FieldtypeImage', 'label' => 'Bild', 'ext' => 'jpg jpeg png gif webp'],
 			'mm_datei' => ['type' => 'FieldtypeFile', 'label' => 'Datei', 'ext' => 'pdf mp4 mov'],
 			'mm_titel' => ['type' => 'FieldtypeText', 'label' => 'Titel'],
+			'mm_alt' => ['type' => 'FieldtypeText', 'label' => 'Alternativtext'],
+			'mm_caption' => ['type' => 'FieldtypeText', 'label' => 'Beschriftung'],
 			'mm_beschreibung' => ['type' => 'FieldtypeTextarea', 'label' => 'Beschreibung'],
 			'mm_tags' => ['type' => 'FieldtypeText', 'label' => 'Tags'],
 			'mm_typ' => ['type' => 'FieldtypeOptions', 'label' => 'Typ'],
@@ -317,7 +413,7 @@ class MediaManagerAPI {
 	protected function _installFieldgroups(): void {
 		$fg = $this->wire->fieldgroups->get(self::ITEM_TEMPLATE) ?: new Fieldgroup();
 		$fg->name = self::ITEM_TEMPLATE;
-		foreach(['title', 'mm_bild', 'mm_datei', 'mm_titel', 'mm_beschreibung', 'mm_tags', 'mm_typ', 'mm_kategorie'] as $fn) {
+		foreach(['title', 'mm_bild', 'mm_datei', 'mm_titel', 'mm_alt', 'mm_caption', 'mm_beschreibung', 'mm_tags', 'mm_typ', 'mm_kategorie'] as $fn) {
 			if($this->wire->fields->get($fn)) $fg->add($fn);
 		}
 		$fg->save();
@@ -385,6 +481,36 @@ class MediaManagerAPI {
 		$first = $item->mm_datei->first();
 		if($first instanceof Pageimage) return null;
 		return $first instanceof Pagefile ? $first : null;
+	}
+
+	/**
+	 * Primäre Datei für Anzeige (Dateiname, Größe): Bild bevorzugt, sonst Video/PDF.
+	 */
+	public function getPrimaryPagefileForDisplay(Page $item): ?Pagefile {
+		$img = $this->getPrimaryPageimage($item);
+		if($img instanceof Pagefile) return $img;
+		return $this->getPrimaryNonImageFile($item);
+	}
+
+	/** Dateiname der primären Datei (für Karten-Label / Liste). */
+	public function getPrimaryBasename(Page $item): string {
+		$f = $this->getPrimaryPagefileForDisplay($item);
+		return $f ? (string) $f->basename : '';
+	}
+
+	/** Lesbare Dateigröße der primären Datei. */
+	public function getPrimaryFilesizeStr(Page $item): string {
+		$f = $this->getPrimaryPagefileForDisplay($item);
+		return $f ? $f->filesizeStr() : '';
+	}
+
+	/** Abmessungen z. B. „1920 × 1080“ oder leer (kein Rasterbild). */
+	public function getPrimaryDimensionsStr(Page $item): string {
+		$img = $this->getPrimaryPageimage($item);
+		if($img instanceof Pageimage && $img->width > 0 && $img->height > 0) {
+			return (string) $img->width . ' × ' . (string) $img->height;
+		}
+		return '';
 	}
 
 	/**

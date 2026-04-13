@@ -211,6 +211,12 @@
 			}
 
 			if (xhr.status === 200 && resp.status === 'ok' && resp.results) {
+				var bulkBar = document.getElementById('mm-bulk-bar');
+				var listMode = bulkBar && bulkBar.getAttribute('data-mm-view') === 'list';
+				if (listMode) {
+					window.location.reload();
+					return;
+				}
 				resp.results.forEach(function(r) {
 					if (r.status === 'ok') prependGridItem(r);
 				});
@@ -270,39 +276,65 @@
 	// Grid-Item nach Upload voranstellen
 	// -----------------------------------------------------------------------
 
-	function prependGridItem(data) {
-		var grid = document.getElementById('mm-grid');
-		if (!grid) return;
-
+	function gridItemInnerHtml(data) {
 		var cfg = getCfg();
 		var csrfName = cfg.csrfName || '';
 		var csrfVal = cfg.csrfVal || '';
 		var typ = data.typ || '';
+		var basename = data.basename || data.titel || '';
+		var titel = data.titel || '';
+		var fileLabel = escapeHtml(basename);
+		var titleSecondary = '';
+		if (titel && basename && titel !== basename) {
+			titleSecondary = '<span class="mm-grid-title-secondary uk-text-meta">' + escapeHtml(titel) + '</span>';
+		}
+		var metaBits = [];
+		if (data.dimensions) metaBits.push(data.dimensions);
+		if (data.filesizeStr) metaBits.push(data.filesizeStr);
+		metaBits.push(typ);
+		var metaLine = '<span class="mm-grid-meta uk-text-meta">' + escapeHtml(metaBits.join(' · ')) + '</span>';
+
 		var showImgEdit = data.hasImage || typ === 'bild';
-
-		var item        = document.createElement('div');
-		item.className  = 'mm-grid-item mm-grid-item-new';
-		item.dataset.id = data.id;
-		item.dataset.typ = typ;
-
-		var thumbHtml = data.thumb
-			? '<img src="' + escapeHtml(data.thumb) + '" alt="" loading="lazy">'
+		var thumbInner = data.thumb
+			? '<img class="mm-grid-img" src="' + escapeHtml(data.thumb) + '" alt="' + fileLabel + '" loading="lazy">'
 			: '<span class="mm-grid-icon"><i class="fa fa-file"></i></span>';
-
 		var imgEditBtn = showImgEdit
 			? '<a href="./imageedit/?id=' + data.id + '" class="mm-btn-imageedit" title="Bild bearbeiten"><i class="fa fa-crop"></i></a>'
 			: '';
-
-		item.innerHTML = '<div class="mm-grid-thumb">' + thumbHtml + '</div>'
-			+ '<div class="mm-grid-info">'
-			+ '<span class="mm-grid-title">' + escapeHtml(data.titel) + '</span>'
-			+ '<span class="mm-grid-typ">' + escapeHtml(typ) + '</span>'
-			+ '</div>'
-			+ '<div class="mm-grid-actions">'
-			+ '<a href="./edit/?id=' + data.id + '" class="mm-btn-edit" title="Bearbeiten"><i class="fa fa-pencil"></i></a>'
+		var pubUrl = data.publicUrl || '';
+		var copyBtn = pubUrl
+			? '<button type="button" class="mm-btn-copy-url" data-url="' + escapeHtml(pubUrl) + '" title="Öffentliche URL kopieren"><i class="fa fa-link"></i></button>'
+			: '';
+		var actionsInner = '<a href="./edit/?id=' + data.id + '" class="mm-btn-edit" title="Bearbeiten"><i class="fa fa-pencil"></i></a>'
 			+ imgEditBtn
-			+ '<button type="button" class="mm-btn-delete" data-id="' + data.id + '" data-csrf-name="' + escapeHtml(csrfName) + '" data-csrf-val="' + escapeHtml(csrfVal) + '" title="Löschen"><i class="fa fa-trash"></i></button>'
+			+ copyBtn
+			+ '<button type="button" class="mm-btn-duplicate" data-id="' + data.id + '" data-csrf-name="' + escapeHtml(csrfName) + '" data-csrf-val="' + escapeHtml(csrfVal) + '" title="Duplizieren"><i class="fa fa-files-o"></i></button>'
+			+ '<button type="button" class="mm-btn-delete" data-id="' + data.id + '" data-csrf-name="' + escapeHtml(csrfName) + '" data-csrf-val="' + escapeHtml(csrfVal) + '" title="Löschen"><i class="fa fa-trash"></i></button>';
+
+		return '<label class="mm-grid-select"><input type="checkbox" class="mm-bulk-cb" value="' + data.id + '" aria-label="Auswahl"></label>'
+			+ '<div class="mm-grid-thumb mm-grid-thumb-cover">' + thumbInner
+			+ '<div class="mm-grid-overlay"><div class="mm-grid-actions-inner">' + actionsInner + '</div></div></div>'
+			+ '<div class="mm-grid-info">'
+			+ '<span class="mm-grid-filename">' + fileLabel + '</span>'
+			+ titleSecondary
+			+ metaLine
 			+ '</div>';
+	}
+
+	function prependGridItem(data) {
+		var bulkBar = document.getElementById('mm-bulk-bar');
+		if (bulkBar && bulkBar.getAttribute('data-mm-view') === 'list') {
+			window.location.reload();
+			return;
+		}
+		var grid = document.getElementById('mm-grid');
+		if (!grid) return;
+
+		var item = document.createElement('div');
+		item.className = 'mm-grid-item mm-grid-item-new';
+		item.dataset.id = data.id;
+		item.dataset.typ = data.typ || '';
+		item.innerHTML = gridItemInnerHtml(data);
 
 		var empty = grid.querySelector('.mm-empty');
 		if (empty) empty.remove();
@@ -347,7 +379,7 @@
 
 		ajaxPost(ajaxUrl, formData, function(resp) {
 			if (resp.status === 'ok') {
-				var item = document.querySelector('.mm-grid-item[data-id="' + id + '"]');
+				var item = document.querySelector('.mm-grid-item[data-id="' + id + '"], tr.mm-list-row[data-id="' + id + '"]');
 				if (item) {
 					item.style.opacity = '0';
 					setTimeout(function() { item.remove(); }, 300);
@@ -473,6 +505,177 @@
 			.replace(/'/g, '&#39;');
 	}
 
+	function getBulkScopeRoot() {
+		var bulk = document.getElementById('mm-bulk-bar');
+		if (bulk && bulk.getAttribute('data-mm-view') === 'list') {
+			return document.getElementById('mm-list-view');
+		}
+		return document.getElementById('mm-grid');
+	}
+
+	function getSelectedBulkIds() {
+		var root = getBulkScopeRoot();
+		if (!root) return [];
+		return Array.prototype.map.call(
+			root.querySelectorAll('.mm-bulk-cb:checked'),
+			function(cb) { return cb.value; }
+		);
+	}
+
+	function updateBulkCount() {
+		var el = document.getElementById('mm-bulk-count');
+		var bulk = document.getElementById('mm-bulk-bar');
+		if (!el || !bulk) return;
+		var total = parseInt(bulk.getAttribute('data-page-total'), 10);
+		if (isNaN(total)) total = 0;
+		var n = getSelectedBulkIds().length;
+		el.textContent = n + ' von ' + total + ' ausgewählt';
+	}
+
+	function copyUrlToClipboard(url) {
+		if (!url) return;
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(url).then(function() {
+				if (window.ProcessWire && ProcessWire.notices) {
+					ProcessWire.notices.add('URL kopiert.');
+				}
+			}).catch(function() {
+				window.prompt('URL kopieren:', url);
+			});
+		} else {
+			window.prompt('URL kopieren:', url);
+		}
+	}
+
+	function initBulkBar() {
+		var selAll = document.getElementById('mm-select-all');
+		var delBtn = document.getElementById('mm-bulk-delete');
+		var catBtn = document.getElementById('mm-bulk-apply-cat');
+		var cfg = getCfg();
+		var ajaxUrl = cfg.ajaxUrl;
+
+		document.addEventListener('change', function(e) {
+			if (e.target && e.target.classList && e.target.classList.contains('mm-bulk-cb') && e.target.closest('#mm-grid, #mm-list-view')) {
+				updateBulkCount();
+			}
+		});
+
+		if (selAll) {
+			selAll.addEventListener('change', function() {
+				var on = this.checked;
+				var scope = getBulkScopeRoot();
+				if (scope) {
+					scope.querySelectorAll('.mm-bulk-cb').forEach(function(cb) {
+						cb.checked = on;
+					});
+				}
+				updateBulkCount();
+			});
+		}
+
+		if (delBtn && ajaxUrl) {
+			delBtn.addEventListener('click', function() {
+				var ids = getSelectedBulkIds();
+				if (!ids.length) {
+					showAdminError('Nichts ausgewählt.');
+					return;
+				}
+				if (!confirm(ids.length + ' Medien wirklich löschen?')) return;
+				var csrf = getCsrf();
+				var fd = new FormData();
+				fd.append('action', 'bulk-delete');
+				fd.append('ids', ids.join(','));
+				if (csrf) fd.append(csrf.name, csrf.value);
+				ajaxPost(ajaxUrl, fd, function(resp) {
+					if (resp.status === 'ok') {
+						ids.forEach(function(id) {
+							var item = document.querySelector('.mm-grid-item[data-id="' + id + '"], tr.mm-list-row[data-id="' + id + '"]');
+							if (item) item.remove();
+						});
+						if (selAll) selAll.checked = false;
+						updateBulkCount();
+						if (window.ProcessWire && ProcessWire.notices) {
+							ProcessWire.notices.add('Gelöscht: ' + (resp.deleted || ids.length));
+						}
+					} else {
+						showAdminError('Massen-Löschen fehlgeschlagen');
+					}
+				});
+			});
+		}
+
+		if (catBtn && ajaxUrl) {
+			catBtn.addEventListener('click', function() {
+				var ids = getSelectedBulkIds();
+				if (!ids.length) {
+					showAdminError('Nichts ausgewählt.');
+					return;
+				}
+				var katEl = document.getElementById('mm-bulk-kategorie');
+				var kat = katEl ? katEl.value : '0';
+				var csrf = getCsrf();
+				var fd = new FormData();
+				fd.append('action', 'bulk-set-kategorie');
+				fd.append('ids', ids.join(','));
+				fd.append('kategorie_id', kat);
+				if (csrf) fd.append(csrf.name, csrf.value);
+				ajaxPost(ajaxUrl, fd, function(resp) {
+					if (resp.status === 'ok') {
+						if (window.ProcessWire && ProcessWire.notices) {
+							ProcessWire.notices.add('Kategorie aktualisiert (' + (resp.updated || ids.length) + ').');
+						}
+					} else {
+						showAdminError(resp.message || 'Kategorie setzen fehlgeschlagen');
+					}
+				});
+			});
+		}
+	}
+
+	function initCopyUrlButtons() {
+		document.addEventListener('click', function(e) {
+			var btn = e.target.closest('.mm-btn-copy-url');
+			if (!btn) return;
+			e.preventDefault();
+			var url = btn.dataset.url || '';
+			copyUrlToClipboard(url);
+		});
+	}
+
+	function initDuplicateButtons() {
+		document.addEventListener('click', function(e) {
+			var btn = e.target.closest('.mm-btn-duplicate');
+			if (!btn) return;
+			e.preventDefault();
+			var id = btn.dataset.id;
+			var cfg = getCfg();
+			var ajaxUrl = cfg.ajaxUrl;
+			if (!ajaxUrl) {
+				showAdminError('AJAX-URL nicht konfiguriert');
+				return;
+			}
+			var csrf = getCsrf();
+			var fd = new FormData();
+			fd.append('action', 'duplicate-media');
+			fd.append('id', id);
+			if (csrf) fd.append(csrf.name, csrf.value);
+			ajaxPost(ajaxUrl, fd, function(resp) {
+				if (resp.status === 'ok') {
+					if (document.getElementById('mm-bulk-bar') && document.getElementById('mm-bulk-bar').getAttribute('data-mm-view') === 'list') {
+						window.location.reload();
+						return;
+					}
+					prependGridItem(resp);
+					if (window.ProcessWire && ProcessWire.notices) {
+						ProcessWire.notices.add('Duplikat angelegt.');
+					}
+				} else {
+					showAdminError(resp.message || 'Duplizieren fehlgeschlagen');
+				}
+			});
+		});
+	}
+
 	// -----------------------------------------------------------------------
 	// Initialisierung
 	// -----------------------------------------------------------------------
@@ -481,6 +684,10 @@
 		initUploadModal();
 		initDeleteButtons();
 		initImageEdit();
+		initBulkBar();
+		initCopyUrlButtons();
+		initDuplicateButtons();
+		updateBulkCount();
 	});
 
 })();

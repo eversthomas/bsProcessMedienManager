@@ -414,7 +414,8 @@
 
 					var thumbHtml;
 					if (resp.url) {
-						thumbHtml = '<img src="' + escapeHtml(resp.url) + '" alt="" loading="lazy">';
+						var altAttr = resp.alt ? escapeHtml(resp.alt) : '';
+						thumbHtml = '<img src="' + escapeHtml(resp.url) + '" alt="' + altAttr + '" loading="lazy">';
 					} else {
 						var iconMap = { video: 'fa-film', pdf: 'fa-file-pdf-o' };
 						var icon    = iconMap[resp.typ] || 'fa-file';

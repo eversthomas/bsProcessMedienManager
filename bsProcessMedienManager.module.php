@@ -26,7 +26,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public static function getModuleInfo(): array {
 		return [
 			'title'       => 'Medien Manager',
-			'version'     => 1.3,
+			'version'     => 1.5,
 			'summary'     => 'Zentrales Medienmanagement für Bilder, Videos und PDFs.',
 			'author'      => 'bsProcessMedienManager',
 			'icon'        => 'photo',
@@ -147,6 +147,8 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 
 		$input   = $this->wire->input;
 		$start   = (int) $input->get('start') ?: 0;
+		$view    = $input->get('view');
+		$view    = ($view === 'list') ? 'list' : 'grid';
 		$filters = [
 			'typ'          => $input->get('typ'),
 			'kategorie_id' => $input->get('kategorie_id'),
@@ -161,7 +163,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		$this->headline('Medien Manager');
 
 		return $this->_injectJsConfig()
-			. $this->_renderGrid($items, $kategorien, $filters, $start, $total);
+			. $this->_renderGrid($items, $kategorien, $filters, $start, $total, $view);
 	}
 
 	/**
@@ -177,7 +179,14 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 
 		$this->log("AJAX action: $action");
 
-		$writingActions = ['delete', 'save-kategorie', 'delete-kategorie'];
+		$writingActions = [
+			'delete',
+			'save-kategorie',
+			'delete-kategorie',
+			'bulk-delete',
+			'bulk-set-kategorie',
+			'duplicate-media',
+		];
 		if(in_array($action, $writingActions)) {
 			$this->_validateCsrf();
 		}
@@ -188,6 +197,9 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			case 'modal-items':      return $this->_ajaxModalItems();
 			case 'thumb':            return $this->_ajaxThumb();
 			case 'delete':           return $this->_ajaxDelete();
+			case 'bulk-delete':      return $this->_ajaxBulkDelete();
+			case 'bulk-set-kategorie': return $this->_ajaxBulkSetKategorie();
+			case 'duplicate-media':  return $this->_ajaxDuplicateMedia();
 			case 'kategorien':       return $this->_ajaxKategorien();
 			case 'save-kategorie':   return $this->_ajaxSaveKategorie();
 			case 'delete-kategorie': return $this->_ajaxDeleteKategorie();
@@ -306,13 +318,17 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			$okCount++;
 			$typStr = $this->api()->getTypString($item);
 			$results[] = [
-				'status'   => 'ok',
-				'filename' => $origName,
-				'id'       => $item->id,
-				'titel'    => $sanitizer->entities($item->mm_titel),
-				'thumb'    => $this->api()->getThumbnailUrlForSlot($item, 'grid'),
-				'typ'      => $typStr,
-				'hasImage' => $this->api()->getPrimaryPageimage($item) !== null,
+				'status'       => 'ok',
+				'filename'     => $origName,
+				'id'           => $item->id,
+				'titel'        => (string) $item->mm_titel,
+				'basename'     => $this->api()->getPrimaryBasename($item),
+				'dimensions'   => $this->api()->getPrimaryDimensionsStr($item),
+				'filesizeStr'  => $this->api()->getPrimaryFilesizeStr($item),
+				'thumb'        => $this->api()->getThumbnailUrlForSlot($item, 'grid'),
+				'typ'          => $typStr,
+				'hasImage'     => $this->api()->getPrimaryPageimage($item) !== null,
+				'publicUrl'    => $this->api()->getPublicFileUrl($item),
 			];
 		}
 
@@ -360,7 +376,11 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			$this->wire->session->redirect('./');
 		}
 
-		$this->headline('Medien bearbeiten: ' . $this->wire->sanitizer->entities($item->mm_titel ?: $item->title));
+		$headTitel = trim((string) $item->mm_titel);
+		if($headTitel === '') {
+			$headTitel = $this->api()->getPrimaryBasename($item) ?: (string) $item->title;
+		}
+		$this->headline('Medien bearbeiten: ' . $this->wire->sanitizer->entities($headTitel));
 		$this->wire->breadcrumbs->add(new Breadcrumb('../', 'Medien Manager'));
 
 		return $this->_injectJsConfig()
@@ -387,6 +407,8 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			'tags'         => $sanitizer->text($input->post('mm_tags') ?: ''),
 			'typ'          => $sanitizer->name($input->post('mm_typ') ?: ''),
 			'kategorie_id' => (int) $input->post('mm_kategorie'),
+			'alt'          => $sanitizer->text($input->post('mm_alt') ?: ''),
+			'caption'      => $sanitizer->text($input->post('mm_caption') ?: ''),
 		];
 
 		$item = $this->api()->saveMediaItem($id, $data);
@@ -401,6 +423,46 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			$this->wire->session->redirect('../edit/?id=' . $id);
 		}
 
+		return '';
+	}
+
+	/**
+	 * Primärdatei ersetzen (gleiche Page-ID; Fieldtype-Referenzen bleiben gültig).
+	 * URL: /setup/medienmanager/replace/ (POST, multipart)
+	 */
+	public function ___executeReplace(): string {
+		$this->_requirePermission();
+		$this->_validateCsrf();
+
+		$id   = (int) $this->wire->input->post('id');
+		$item = $id ? $this->api()->getMediaItem($id) : null;
+		if(!$item || !$item->id) {
+			$this->wire->error('Medium nicht gefunden.');
+			$this->wire->session->redirect('../');
+			return '';
+		}
+
+		if(!isset($_FILES['mm_ersatz']) || (int) $_FILES['mm_ersatz']['error'] !== UPLOAD_ERR_OK) {
+			$err = isset($_FILES['mm_ersatz']['error']) ? (int) $_FILES['mm_ersatz']['error'] : UPLOAD_ERR_NO_FILE;
+			$this->wire->error($this->_uploadErrorMessage($err));
+			$this->wire->session->redirect('../edit/?id=' . $id);
+			return '';
+		}
+
+		$tmp  = (string) $_FILES['mm_ersatz']['tmp_name'];
+		$name = (string) $_FILES['mm_ersatz']['name'];
+		if($tmp === '' || !is_uploaded_file($tmp)) {
+			$this->wire->error('Ungültige Upload-Datei.');
+			$this->wire->session->redirect('../edit/?id=' . $id);
+			return '';
+		}
+
+		if($this->api()->replacePrimaryFile($item, $tmp, $name)) {
+			$this->wire->message('Datei ersetzt. Verweise im Frontend (gleiche Medien-ID) bleiben erhalten.');
+		} else {
+			$this->wire->error('Ersetzen fehlgeschlagen: passender Dateityp und gleiche Endung wie die bestehende Datei nötig.');
+		}
+		$this->wire->session->redirect('../edit/?id=' . $id);
 		return '';
 	}
 
@@ -550,7 +612,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public function ___upgrade($fromVersion, $toVersion): void {
 		require_once __DIR__ . '/MediaManagerAPI.php';
 		$this->api = new MediaManagerAPI($this->wire());
-		if(version_compare((string) $fromVersion, '1.2', '<')) {
+		if(version_compare((string) $fromVersion, '1.5', '<')) {
 			$this->api->install();
 		}
 		parent::___upgrade($fromVersion, $toVersion);
@@ -632,10 +694,16 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			return json_encode(['status' => 'error', 'url' => '']);
 		}
 
+		$alt = '';
+		if($item->hasField('mm_alt') && (string) $item->mm_alt !== '') {
+			$alt = $this->wire->sanitizer->entities($item->mm_alt);
+		}
+
 		return json_encode([
 			'status' => 'ok',
 			'url'    => $this->api()->getThumbnailUrlForSlot($item, 'chip'),
-			'titel'  => $this->wire->sanitizer->entities($item->mm_titel ?: $item->title),
+			'titel'  => (string) ($item->mm_titel ?: $item->title),
+			'alt'    => $alt,
 			'typ'    => $this->api()->getTypString($item),
 		]);
 	}
@@ -653,6 +721,74 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		}
 
 		return json_encode(['status' => $success ? 'ok' : 'error']);
+	}
+
+	protected function _ajaxBulkDelete(): string {
+		$input = $this->wire->input;
+		$raw   = (string) $input->post('ids');
+		$ids   = array_filter(array_map('intval', explode(',', $raw)));
+		$deleted = 0;
+		foreach($ids as $id) {
+			if($id > 0 && $this->api()->deleteMedia($id)) $deleted++;
+		}
+		return json_encode([
+			'status'  => 'ok',
+			'deleted' => $deleted,
+			'requested' => count($ids),
+		]);
+	}
+
+	protected function _ajaxBulkSetKategorie(): string {
+		$input = $this->wire->input;
+		$raw   = (string) $input->post('ids');
+		$ids   = array_filter(array_map('intval', explode(',', $raw)));
+		$katId = (int) $input->post('kategorie_id');
+
+		$kat = null;
+		if($katId > 0) {
+			$kat = $this->wire->pages->get($katId);
+			if(!$kat->id || $kat->template->name !== MediaManagerAPI::KATEGORIE_TEMPLATE) {
+				return json_encode(['status' => 'error', 'message' => 'Ungültige Kategorie']);
+			}
+		}
+
+		$updated = 0;
+		foreach($ids as $id) {
+			if($id <= 0) continue;
+			$p = $this->api()->getMediaItem($id);
+			if(!$p->id) continue;
+			$p->of(false);
+			$p->mm_kategorie = $katId > 0 ? $kat : null;
+			$p->save();
+			$updated++;
+		}
+
+		return json_encode([
+			'status' => 'ok',
+			'updated' => $updated,
+		]);
+	}
+
+	protected function _ajaxDuplicateMedia(): string {
+		$id   = (int) $this->wire->input->post('id');
+		$copy = $this->api()->duplicateMediaItem($id);
+		if(!$copy->id) {
+			return json_encode(['status' => 'error', 'message' => 'Duplizieren fehlgeschlagen']);
+		}
+		$sanitizer = $this->wire->sanitizer;
+		$typStr    = $this->api()->getTypString($copy);
+		return json_encode([
+			'status'      => 'ok',
+			'id'          => $copy->id,
+			'titel'       => (string) $copy->mm_titel,
+			'basename'    => $this->api()->getPrimaryBasename($copy),
+			'dimensions'  => $this->api()->getPrimaryDimensionsStr($copy),
+			'filesizeStr' => $this->api()->getPrimaryFilesizeStr($copy),
+			'thumb'       => $this->api()->getThumbnailUrlForSlot($copy, 'grid'),
+			'typ'         => $typStr,
+			'hasImage'    => $this->api()->getPrimaryPageimage($copy) !== null,
+			'publicUrl'   => $this->api()->getPublicFileUrl($copy),
+		]);
 	}
 
 	protected function _ajaxKategorien(): string {
@@ -700,31 +836,73 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	// Render-Methoden
 	// -----------------------------------------------------------------------
 
-	protected function _renderGrid(PageArray $items, PageArray $kategorien, array $filters, int $start, int $total): string {
+	/**
+	 * GET-Query für Medien-Übersicht (Filter, Start, Ansicht).
+	 */
+	protected function _buildMedienQueryUrl(array $filters, int $start, string $view): string {
+		$sanitizer = $this->wire->sanitizer;
+		$parts     = ['view' => $view === 'list' ? 'list' : 'grid'];
+		if(!empty($filters['typ'])) {
+			$parts['typ'] = $sanitizer->name((string) $filters['typ']);
+		}
+		if(!empty($filters['kategorie_id'])) {
+			$parts['kategorie_id'] = (int) $filters['kategorie_id'];
+		}
+		if(!empty($filters['q'])) {
+			$parts['q'] = (string) $filters['q'];
+		}
+		if($start > 0) {
+			$parts['start'] = $start;
+		}
+		return './?' . http_build_query($parts);
+	}
+
+	protected function _renderGrid(PageArray $items, PageArray $kategorien, array $filters, int $start, int $total, string $view = 'grid'): string {
 		$sanitizer = $this->wire->sanitizer;
 		$csrfName  = $this->wire->session->CSRF->getTokenName();
 		$csrfVal   = $this->wire->session->CSRF->getTokenValue();
 
+		$urlGrid = $this->_buildMedienQueryUrl($filters, $start, 'grid');
+		$urlList = $this->_buildMedienQueryUrl($filters, $start, 'list');
+		$gridAct = $view === 'grid' ? ' uk-active' : '';
+		$listAct = $view === 'list' ? ' uk-active' : '';
+
 		$out = "<div class='mm-admin-wrap'>";
 
-		$out .= "<div class='mm-toolbar'>
-			<div class='mm-toolbar-left'>
-				<button type='button' class='mm-upload-btn ui-button ui-state-default' id='mm-upload-btn'>
-					<i class='fa fa-upload'></i> Medien hochladen
-				</button>
-				<a href='./kategorien/' class='ui-button ui-state-default'>
-					<i class='fa fa-folder'></i> Kategorien
-				</a>
-			</div>
-			<div class='mm-toolbar-right'>
-				<form class='mm-filter-form' method='get' action='./'>
-					<select name='typ' class='mm-filter-select' onchange='this.form.submit()'>
-						<option value=''" . ($filters['typ'] ? '' : ' selected') . ">Alle Typen</option>
-						<option value='bild'" . ($filters['typ'] === 'bild' ? ' selected' : '') . ">Bilder</option>
-						<option value='video'" . ($filters['typ'] === 'video' ? ' selected' : '') . ">Videos</option>
-						<option value='pdf'" . ($filters['typ'] === 'pdf' ? ' selected' : '') . ">PDFs</option>
-					</select>
-					<select name='kategorie_id' class='mm-filter-select' onchange='this.form.submit()'>";
+		$bulkKat = "<option value='0'>— Keine —</option>";
+		foreach($kategorien as $kat) {
+			$bulkKat .= "<option value='{$kat->id}'>" . $sanitizer->entities($kat->title) . "</option>";
+		}
+
+		$pageItemCount = $items->count();
+
+		$out .= "
+		<div class='uk-card uk-card-default uk-card-body uk-padding-remove uk-margin-bottom mm-toolbar-bulk-card'>
+			<div class='mm-toolbar uk-padding-small'>
+				<div class='mm-toolbar-left'>
+					<button type='button' class='uk-button uk-button-primary uk-button-small' id='mm-upload-btn'>
+						<i class='fa fa-upload'></i> Medien hochladen
+					</button>
+					<a href='./kategorien/' class='uk-button uk-button-default uk-button-small'>
+						<i class='fa fa-folder'></i> Kategorien
+					</a>
+					<div class='uk-inline mm-view-toggle-wrap'>
+						<div class='uk-button-group mm-view-toggle' role='group' aria-label='Ansicht'>
+							<a href='" . $sanitizer->entities($urlGrid) . "' class='uk-button uk-button-default uk-button-small{$gridAct}' title='Kachelansicht'><i class='fa fa-th-large' aria-hidden='true'></i> Raster</a>
+							<a href='" . $sanitizer->entities($urlList) . "' class='uk-button uk-button-default uk-button-small{$listAct}' title='Tabellenansicht'><i class='fa fa-list' aria-hidden='true'></i> Liste</a>
+						</div>
+					</div>
+				</div>
+				<div class='mm-toolbar-right'>
+					<form class='mm-filter-form' method='get' action='./'>
+						<input type='hidden' name='view' value='" . $sanitizer->entities($view) . "'>
+						<select name='typ' class='uk-select uk-form-small mm-filter-select' onchange='this.form.submit()'>
+							<option value=''" . ($filters['typ'] ? '' : ' selected') . ">Alle Typen</option>
+							<option value='bild'" . ($filters['typ'] === 'bild' ? ' selected' : '') . ">Bilder</option>
+							<option value='video'" . ($filters['typ'] === 'video' ? ' selected' : '') . ">Videos</option>
+							<option value='pdf'" . ($filters['typ'] === 'pdf' ? ' selected' : '') . ">PDFs</option>
+						</select>
+						<select name='kategorie_id' class='uk-select uk-form-small mm-filter-select' onchange='this.form.submit()'>";
 
 		$out .= "<option value=''>Alle Kategorien</option>";
 		foreach($kategorien as $kat) {
@@ -734,25 +912,42 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 
 		$qVal = $sanitizer->entities($filters['q'] ?? '');
 		$out .= "
-					</select>
-					<input type='search' name='q' value='{$qVal}' placeholder='Suchen…' class='mm-search-input'>
-					<button type='submit' class='ui-button ui-state-default'><i class='fa fa-search'></i></button>
-				</form>
+						</select>
+						<input type='search' name='q' value='{$qVal}' placeholder='Suchen…' class='uk-input uk-form-small mm-search-input'>
+						<button type='submit' class='uk-button uk-button-default uk-button-small'><i class='fa fa-search'></i></button>
+					</form>
+				</div>
+			</div>
+			<hr class='uk-margin-remove mm-toolbar-bulk-divider'>
+			<div class='uk-padding-small mm-bulk-bar' id='mm-bulk-bar' data-mm-view='" . $sanitizer->entities($view) . "' data-page-total='{$pageItemCount}'>
+				<div class='uk-flex uk-flex-middle uk-flex-wrap'>
+					<label class='mm-bulk-select-all uk-margin-small-right'><input type='checkbox' id='mm-select-all' title='Alle auf dieser Seite'> <span>Alle</span></label>
+					<span class='mm-bulk-count uk-text-meta uk-margin-small-right' id='mm-bulk-count'>0 von {$pageItemCount} ausgewählt</span>
+					<select id='mm-bulk-kategorie' class='uk-select uk-form-small mm-bulk-select uk-margin-small-right'>{$bulkKat}</select>
+					<button type='button' id='mm-bulk-apply-cat' class='uk-button uk-button-default uk-button-small uk-margin-small-right'><i class='fa fa-folder'></i> Kategorie setzen</button>
+					<button type='button' id='mm-bulk-delete' class='uk-button uk-button-danger uk-button-small'><i class='fa fa-trash'></i> Auswahl löschen</button>
+				</div>
 			</div>
 		</div>";
 
-		$out .= "<div class='mm-grid' id='mm-grid'>";
-		if($items->count()) {
-			foreach($items as $item) {
-				$out .= $this->_renderGridItem($item, $csrfName, $csrfVal);
-			}
+		if($view === 'list') {
+			$out .= "<div class='mm-list-view' id='mm-list-view'>";
+			$out .= $this->_renderListView($items, $csrfName, $csrfVal);
+			$out .= "</div>";
 		} else {
-			$out .= "<p class='mm-empty'>Keine Medien gefunden.</p>";
+			$out .= "<div class='mm-grid' id='mm-grid'>";
+			if($items->count()) {
+				foreach($items as $item) {
+					$out .= $this->_renderGridItem($item, $csrfName, $csrfVal);
+				}
+			} else {
+				$out .= "<p class='mm-empty'>Keine Medien gefunden.</p>";
+			}
+			$out .= "</div>";
 		}
-		$out .= "</div>";
 
 		if($total > $this->limit) {
-			$out .= $this->_renderPagination($start, $total, $filters);
+			$out .= $this->_renderPagination($start, $total, $filters, $view);
 		}
 
 		$out .= $this->_renderUploadForm($kategorien, $csrfName, $csrfVal);
@@ -763,47 +958,162 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 
 	protected function _renderGridItem(Page $item, string $csrfName, string $csrfVal): string {
 		$sanitizer = $this->wire->sanitizer;
-		$titel     = $sanitizer->entities($item->mm_titel ?: $item->title);
 		$typ       = $this->api()->getTypString($item);
-		$thumbUrl  = $this->api()->getThumbnailUrlForSlot($item, 'grid');
+		$basename  = $this->api()->getPrimaryBasename($item);
+		$titelRaw  = trim((string) ($item->mm_titel ?: $item->title));
+		$fileLabel = $basename !== '' ? $basename : $titelRaw;
+		$fileLabel = $sanitizer->entities($fileLabel);
 
-		if($thumbUrl) {
-			$thumbHtml = "<img src='" . $sanitizer->entities($thumbUrl) . "' alt='" . $titel . "' loading='lazy'>";
-		} else {
-			$iconMap   = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o'];
-			$icon      = $iconMap[$typ] ?? 'fa-file';
-			$thumbHtml = "<span class='mm-grid-icon'><i class='fa $icon'></i></span>";
+		$imgAlt = $fileLabel;
+		if($item->hasField('mm_alt') && (string) $item->mm_alt !== '') {
+			$imgAlt = $sanitizer->entities($item->mm_alt);
 		}
 
-		return "<div class='mm-grid-item' data-id='{$item->id}' data-typ='" . $sanitizer->entities($typ) . "'>
-			<div class='mm-grid-thumb'>$thumbHtml</div>
-			<div class='mm-grid-info'>
-				<span class='mm-grid-title'>$titel</span>
-				<span class='mm-grid-typ'>$typ</span>
+		$thumbUrl  = $this->api()->getThumbnailUrlForSlot($item, 'grid');
+		$pubUrl    = $this->api()->getPublicFileUrl($item);
+		$pubAttr   = $pubUrl !== '' ? htmlspecialchars($pubUrl, ENT_QUOTES | ENT_HTML5, 'UTF-8') : '';
+
+		$titleSecondary = '';
+		if($titelRaw !== '' && $basename !== '' && $titelRaw !== $basename) {
+			$titleSecondary = '<span class="mm-grid-title-secondary uk-text-meta">' . $sanitizer->entities($titelRaw) . '</span>';
+		}
+
+		$captionLine = '';
+		if($item->hasField('mm_caption') && (string) $item->mm_caption !== '') {
+			$cap = (string) $item->mm_caption;
+			$captionLine = '<span class="mm-grid-caption" title="' . htmlspecialchars($cap, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '">'
+				. $sanitizer->entities($cap) . '</span>';
+		}
+
+		$dim     = $this->api()->getPrimaryDimensionsStr($item);
+		$sizeStr = $this->api()->getPrimaryFilesizeStr($item);
+		$metaBits = [];
+		if($dim !== '') {
+			$metaBits[] = $dim;
+		}
+		if($sizeStr !== '') {
+			$metaBits[] = $sizeStr;
+		}
+		$metaBits[] = $typ;
+		$metaLine   = '<span class="mm-grid-meta uk-text-meta">' . $sanitizer->entities(implode(' · ', $metaBits)) . '</span>';
+
+		if($thumbUrl) {
+			$thumbInner = "<img class='mm-grid-img' src='" . $sanitizer->entities($thumbUrl) . "' alt='" . $imgAlt . "' loading='lazy'>";
+		} else {
+			$iconMap    = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o'];
+			$icon       = $iconMap[$typ] ?? 'fa-file';
+			$thumbInner = "<span class='mm-grid-icon'><i class='fa $icon'></i></span>";
+		}
+
+		$copyBtn = $pubAttr !== ''
+			? "<button type='button' class='mm-btn-copy-url' data-url='" . $pubAttr . "' title='Öffentliche URL kopieren'><i class='fa fa-link'></i></button>"
+			: '';
+
+		$actionsInner = "<a href='./edit/?id={$item->id}' class='mm-btn-edit' title='Bearbeiten'><i class='fa fa-pencil'></i></a>"
+			. ($this->api()->getPrimaryPageimage($item) ? "<a href='./imageedit/?id={$item->id}' class='mm-btn-imageedit' title='Bild bearbeiten'><i class='fa fa-crop'></i></a>" : '')
+			. $copyBtn
+			. "<button type='button' class='mm-btn-duplicate' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "' title='Duplizieren'><i class='fa fa-files-o'></i></button>"
+			. "<button type='button' class='mm-btn-delete' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "' title='Löschen'><i class='fa fa-trash'></i></button>";
+
+		return "<div class='mm-grid-item uk-transition-toggle' tabindex='0' data-id='{$item->id}' data-typ='" . $sanitizer->entities($typ) . "'>
+			<label class='mm-grid-select'>
+				<input type='checkbox' class='mm-bulk-cb' value='{$item->id}' aria-label='Auswahl'>
+			</label>
+			<div class='mm-grid-thumb mm-grid-thumb-cover'>
+				{$thumbInner}
+				<div class='mm-grid-overlay'>
+					<div class='mm-grid-actions-inner'>{$actionsInner}</div>
+				</div>
 			</div>
-			<div class='mm-grid-actions'>
-				<a href='./edit/?id={$item->id}' class='mm-btn-edit' title='Bearbeiten'><i class='fa fa-pencil'></i></a>"
-				. ($this->api()->getPrimaryPageimage($item) ? "<a href='./imageedit/?id={$item->id}' class='mm-btn-imageedit' title='Bild bearbeiten'><i class='fa fa-crop'></i></a>" : '')
-				. "<button type='button' class='mm-btn-delete' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "' title='Löschen'><i class='fa fa-trash'></i></button>
+			<div class='mm-grid-info'>
+				<span class='mm-grid-filename'>{$fileLabel}</span>
+				{$titleSecondary}
+				{$captionLine}
+				{$metaLine}
 			</div>
 		</div>";
 	}
 
-	protected function _renderPagination(int $start, int $total, array $filters): string {
+	protected function _renderListView(PageArray $items, string $csrfName, string $csrfVal): string {
+		if(!$items->count()) {
+			return "<p class='mm-empty'>Keine Medien gefunden.</p>";
+		}
+		$sanitizer = $this->wire->sanitizer;
+		$out       = "<div class='uk-overflow-auto'><table class='uk-table uk-table-hover uk-table-divider uk-table-middle uk-table-small mm-list-table'>";
+		$out      .= '<thead><tr>
+			<th class="uk-table-shrink"></th>
+			<th class="uk-table-shrink"></th>
+			<th>Datei</th>
+			<th class="uk-width-small uk-text-nowrap">Maße</th>
+			<th class="uk-width-small">Größe</th>
+			<th class="uk-width-small">Typ</th>
+			<th class="uk-table-shrink"></th>
+		</tr></thead><tbody>';
+		foreach($items as $item) {
+			$out .= $this->_renderListRow($item, $csrfName, $csrfVal);
+		}
+		$out .= '</tbody></table></div>';
+		return $out;
+	}
+
+	protected function _renderListRow(Page $item, string $csrfName, string $csrfVal): string {
+		$sanitizer = $this->wire->sanitizer;
+		$typ       = $this->api()->getTypString($item);
+		$basename  = $this->api()->getPrimaryBasename($item);
+		$titelRaw  = trim((string) ($item->mm_titel ?: $item->title));
+		$fileLabel = $basename !== '' ? $basename : $titelRaw;
+		$fileEsc   = $sanitizer->entities($fileLabel);
+		$subLine   = '';
+		if($titelRaw !== '' && $basename !== '' && $titelRaw !== $basename) {
+			$subLine = '<div class="uk-text-meta">' . $sanitizer->entities($titelRaw) . '</div>';
+		}
+		$thumbUrl = $this->api()->getThumbnailUrlForSlot($item, 'grid');
+		if($thumbUrl) {
+			$thumb = "<img class='mm-list-thumb' src='" . $sanitizer->entities($thumbUrl) . "' alt='' loading='lazy'>";
+		} else {
+			$iconMap = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o'];
+			$icon    = $iconMap[$typ] ?? 'fa-file';
+			$thumb   = "<span class='mm-list-icon'><i class='fa $icon'></i></span>";
+		}
+		$dim     = $this->api()->getPrimaryDimensionsStr($item);
+		$sizeStr = $this->api()->getPrimaryFilesizeStr($item);
+		$dimEsc  = $dim !== '' ? $sanitizer->entities($dim) : '—';
+		$sizeEsc = $sizeStr !== '' ? $sanitizer->entities($sizeStr) : '—';
+
+		$pubUrl  = $this->api()->getPublicFileUrl($item);
+		$pubAttr = $pubUrl !== '' ? htmlspecialchars($pubUrl, ENT_QUOTES | ENT_HTML5, 'UTF-8') : '';
+		$copyBtn = $pubAttr !== ''
+			? "<button type='button' class='uk-icon-link mm-btn-copy-url uk-margin-small-right' data-url='" . $pubAttr . "' title='URL kopieren'><i class='fa fa-link'></i></button>"
+			: '';
+
+		return "<tr class='mm-list-row' data-id='{$item->id}' data-typ='" . $sanitizer->entities($typ) . "'>
+			<td><label class='mm-list-cb-wrap'><input type='checkbox' class='mm-bulk-cb' value='{$item->id}' aria-label='Auswahl'></label></td>
+			<td class='mm-list-thumb-cell'>{$thumb}</td>
+			<td><div class='mm-list-file'>{$fileEsc}</div>{$subLine}</td>
+			<td>{$dimEsc}</td>
+			<td>{$sizeEsc}</td>
+			<td><span class='uk-label uk-label-default'>" . $sanitizer->entities($typ) . "</span></td>
+			<td class='uk-text-nowrap'>
+				<a href='./edit/?id={$item->id}' class='uk-icon-link uk-margin-small-right' title='Bearbeiten'><i class='fa fa-pencil'></i></a>"
+				. ($this->api()->getPrimaryPageimage($item) ? "<a href='./imageedit/?id={$item->id}' class='uk-icon-link uk-margin-small-right' title='Bild bearbeiten'><i class='fa fa-crop'></i></a>" : '')
+				. $copyBtn
+				. "<button type='button' class='uk-icon-link mm-btn-duplicate uk-margin-small-right' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "' title='Duplizieren'><i class='fa fa-files-o'></i></button>"
+				. "<button type='button' class='uk-icon-link mm-btn-delete' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "' title='Löschen'><i class='fa fa-trash'></i></button>
+			</td>
+		</tr>";
+	}
+
+	protected function _renderPagination(int $start, int $total, array $filters, string $view = 'grid'): string {
 		$pages     = (int) ceil($total / $this->limit);
 		$current   = (int) floor($start / $this->limit);
 		$sanitizer = $this->wire->sanitizer;
 
-		$queryBase = '?';
-		foreach($filters as $k => $v) {
-			if($v) $queryBase .= $sanitizer->entities($k) . '=' . $sanitizer->entities((string) $v) . '&';
-		}
-
-		$out = "<nav class='mm-pagination'>";
+		$out = "<nav class='mm-pagination uk-margin'>";
 		for($i = 0; $i < $pages; $i++) {
 			$s      = $i * $this->limit;
 			$active = $i === $current ? ' class="mm-page-active"' : '';
-			$out   .= "<a href='{$queryBase}start={$s}'{$active}>" . ($i + 1) . "</a>";
+			$href   = $sanitizer->entities($this->_buildMedienQueryUrl($filters, $s, $view));
+			$out   .= "<a href='{$href}'{$active}>" . ($i + 1) . "</a>";
 		}
 		$out .= "</nav>";
 		return $out;
@@ -892,42 +1202,83 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			$typOptions .= "<option value='{$val}'{$sel}>{$label}</option>";
 		}
 
+		$replaceAccept = '.jpg,.jpeg,.png,.gif,.webp';
+		if($typ === 'video') {
+			$replaceAccept = '.mp4,.mov';
+		} elseif($typ === 'pdf') {
+			$replaceAccept = '.pdf';
+		}
+
+		$basename  = $this->api()->getPrimaryBasename($item);
+		$titelForm = trim((string) $item->mm_titel);
+		if($titelForm === '' && $basename !== '') {
+			$titelForm = $basename;
+		}
+
+		$previewBox = $vorschau !== ''
+			? "<div class='mm-edit-preview-sticky uk-card uk-card-default uk-card-body uk-padding-small'>{$vorschau}</div>"
+			: '';
+
 		return "
 		<div class='mm-edit-wrap'>
-			{$vorschau}
-			<form method='post' action='../save/' class='mm-edit-form'>
-				<input type='hidden' name='{$csrfName}' value='{$csrfVal}'>
-				<input type='hidden' name='id' value='{$item->id}'>
-				<div class='uk-margin'>
-					<label class='uk-form-label'>Titel</label>
-					<input type='text' name='mm_titel' value='" . $sanitizer->entities($item->mm_titel) . "' class='uk-input' required>
+			<div class='uk-grid-medium' uk-grid>
+				<div class='uk-width-1-1 uk-width-1-3@m'>
+					{$previewBox}
 				</div>
-				" . ($item->hasField('mm_beschreibung') ? "<div class='uk-margin'>
-					<label class='uk-form-label'>Beschreibung</label>
-					<textarea name='mm_beschreibung' class='uk-textarea' rows='3'>" . $sanitizer->entities($item->mm_beschreibung) . "</textarea>
-				</div>" : '') . "
-				" . ($item->hasField('mm_tags') ? "<div class='uk-margin'>
-					<label class='uk-form-label'>Tags <small>(kommagetrennt)</small></label>
-					<input type='text' name='mm_tags' value='" . $sanitizer->entities($item->mm_tags) . "' class='uk-input'>
-				</div>" : '') . "
-				<div class='uk-margin'>
-					<label class='uk-form-label'>Typ</label>
-					<select name='mm_typ' class='uk-select'>{$typOptions}</select>
+				<div class='uk-width-1-1 uk-width-2-3@m'>
+					<form method='post' action='../save/' class='mm-edit-form'>
+						<input type='hidden' name='{$csrfName}' value='{$csrfVal}'>
+						<input type='hidden' name='id' value='{$item->id}'>
+						<div class='uk-margin'>
+							<label class='uk-form-label'>Titel</label>
+							<input type='text' name='mm_titel' value='" . $sanitizer->entities($titelForm) . "' class='uk-input' required>
+						</div>
+						" . ($item->hasField('mm_beschreibung') ? "<div class='uk-margin'>
+							<label class='uk-form-label'>Beschreibung</label>
+							<textarea name='mm_beschreibung' class='uk-textarea' rows='3'>" . $sanitizer->entities($item->mm_beschreibung) . "</textarea>
+						</div>" : '') . "
+						" . ($item->hasField('mm_tags') ? "<div class='uk-margin'>
+							<label class='uk-form-label'>Tags <small>(kommagetrennt)</small></label>
+							<input type='text' name='mm_tags' value='" . $sanitizer->entities($item->mm_tags) . "' class='uk-input'>
+						</div>" : '') . "
+						" . ($item->hasField('mm_alt') ? "<div class='uk-margin'>
+							<label class='uk-form-label'>Alternativtext <small>(Barrierefreiheit)</small></label>
+							<input type='text' name='mm_alt' value='" . $sanitizer->entities($item->mm_alt) . "' class='uk-input' placeholder='Bild für Screenreader und SEO beschreiben (was zu sehen ist)'>
+						</div>" : '') . "
+						" . ($item->hasField('mm_caption') ? "<div class='uk-margin'>
+							<label class='uk-form-label'>Beschriftung</label>
+							<input type='text' name='mm_caption' value='" . $sanitizer->entities($item->mm_caption) . "' class='uk-input' placeholder='Optional'>
+						</div>" : '') . "
+						<div class='uk-margin'>
+							<label class='uk-form-label'>Typ</label>
+							<select name='mm_typ' class='uk-select'>{$typOptions}</select>
+						</div>
+						<div class='uk-margin'>
+							<label class='uk-form-label'>Kategorie</label>
+							<select name='mm_kategorie' class='uk-select'>{$katOptions}</select>
+						</div>
+						<div class='mm-edit-actions'>
+							<button type='submit' class='uk-button uk-button-primary'><i class='fa fa-save'></i> Speichern</button>
+							<a href='../' class='uk-button uk-button-default'>Abbrechen</a>"
+							. ($this->api()->getPrimaryPageimage($item) ? "<a href='../imageedit/?id={$item->id}' class='uk-button uk-button-default'><i class='fa fa-crop'></i> Bild bearbeiten</a>" : '')
+							. "
+							<button type='button' class='mm-btn-delete-single uk-button uk-button-danger' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "'>
+								<i class='fa fa-trash'></i> Löschen
+							</button>
+						</div>
+					</form>
+					<div class='mm-edit-replace uk-margin'>
+						<label class='uk-form-label'>Datei ersetzen</label>
+						<p class='mm-hint'>Gleiche Dateiendung wie die aktuelle Datei. Verknüpfungen im Frontend bleiben gültig.</p>
+						<form method='post' action='../replace/' enctype='multipart/form-data' class='mm-replace-form'>
+							<input type='hidden' name='{$csrfName}' value='{$csrfVal}'>
+							<input type='hidden' name='id' value='{$item->id}'>
+							<input type='file' name='mm_ersatz' class='uk-input' accept='{$replaceAccept}' required>
+							<button type='submit' class='uk-button uk-button-default'><i class='fa fa-refresh'></i> Datei ersetzen</button>
+						</form>
+					</div>
 				</div>
-				<div class='uk-margin'>
-					<label class='uk-form-label'>Kategorie</label>
-					<select name='mm_kategorie' class='uk-select'>{$katOptions}</select>
-				</div>
-				<div class='mm-edit-actions'>
-					<button type='submit' class='ui-button ui-state-default'><i class='fa fa-save'></i> Speichern</button>
-					<a href='../' class='ui-button'>Abbrechen</a>"
-					. ($this->api()->getPrimaryPageimage($item) ? "<a href='../imageedit/?id={$item->id}' class='ui-button'><i class='fa fa-crop'></i> Bild bearbeiten</a>" : '')
-					. "
-					<button type='button' class='mm-btn-delete-single ui-button' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "'>
-						<i class='fa fa-trash'></i> Löschen
-					</button>
-				</div>
-			</form>
+			</div>
 		</div>";
 	}
 
@@ -979,16 +1330,24 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			$titel    = $sanitizer->entities($item->mm_titel ?: $item->title);
 			$typ      = $this->api()->getTypString($item);
 			$thumbUrl = $this->api()->getThumbnailUrlForSlot($item, 'picker');
+			$imgAlt   = $titel;
+			if($item->hasField('mm_alt') && (string) $item->mm_alt !== '') {
+				$imgAlt = $sanitizer->entities($item->mm_alt);
+			}
+			$titleTip = '';
+			if($item->hasField('mm_caption') && (string) $item->mm_caption !== '') {
+				$titleTip = ' title="' . htmlspecialchars((string) $item->mm_caption, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '"';
+			}
 
 			if($thumbUrl) {
-				$thumb = "<img src='" . $sanitizer->entities($thumbUrl) . "' alt='" . $titel . "' loading='lazy'>";
+				$thumb = "<img src='" . $sanitizer->entities($thumbUrl) . "' alt='" . $imgAlt . "' loading='lazy'>";
 			} else {
 				$iconMap = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o'];
 				$icon    = $iconMap[$typ] ?? 'fa-file';
 				$thumb   = "<span class='mm-type-icon'><i class='fa $icon'></i></span>";
 			}
 
-			$out .= "<div class='mm-picker-item' data-id='{$item->id}' data-typ='" . $sanitizer->entities($typ) . "' data-titel='" . $titel . "'>
+			$out .= "<div class='mm-picker-item' data-id='{$item->id}' data-typ='" . $sanitizer->entities($typ) . "' data-titel='" . $titel . "'{$titleTip}>
 				<div class='mm-picker-thumb'>{$thumb}</div>
 				<div class='mm-picker-title'>{$titel}</div>
 			</div>";
