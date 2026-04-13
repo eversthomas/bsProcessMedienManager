@@ -10,23 +10,35 @@ class MediaManagerAPI {
 	const ROOT_NAME          = 'medienmanager';
 
 	/**
-	 * Standard-Vorschau-Variation (Breite × Höhe in px).
-	 *
-	 * Wird beim Bild-Upload per Pageimage::size() als physische Datei im selben
-	 * Ordner wie das Original abgelegt (ProcessWire-Namensmuster z. B. foto.300x300.jpg).
+	 * Standard-Vorschau-Variation beim Upload (entspricht Slot „grid“).
+	 * Physische Datei per Pageimage::size() neben dem Original.
 	 *
 	 * @see https://processwire.com/api/ref/pageimage/size/
 	 */
 	public const THUMB_WIDTH  = 300;
 	public const THUMB_HEIGHT = 300;
 
+	/** Vorschau-Slot: Medien-Grid (Kacheln) */
+	public const SLOT_GRID_W = 300;
+	public const SLOT_GRID_H = 300;
+	/** Modal-Picker */
+	public const SLOT_PICKER_W = 160;
+	public const SLOT_PICKER_H = 120;
+	/** Bearbeiten-Formular Vorschau */
+	public const SLOT_EDIT_W = 300;
+	public const SLOT_EDIT_H = 225;
+	/** Inputfield-Chips */
+	public const SLOT_CHIP_W = 120;
+	public const SLOT_CHIP_H = 90;
+
 	public function __construct(ProcessWire $wire) {
 		$this->wire = $wire;
 	}
 
 	protected function _getRootPage(): Page {
-		$adminId = $this->wire->config->adminRootPageID;
-		return $this->wire->pages->get("name=" . self::ROOT_NAME . ", parent=$adminId, template=" . self::ROOT_TEMPLATE . ", include=all");
+		$adminId = (int) $this->wire->config->adminRootPageID;
+		// Root wird bei install als Child von admin angelegt (Template i. d. R. „admin“, nicht medienmanager-root).
+		return $this->wire->pages->get("name=" . self::ROOT_NAME . ", parent=$adminId, include=all");
 	}
 
 	public function getRootPageId(): int {
@@ -50,7 +62,11 @@ class MediaManagerAPI {
 		}
 		if(!empty($filters['q'])) {
 			$q = $sanitizer->selectorValue($filters['q']);
-			$selector .= ", mm_titel%=$q|mm_tags%=$q";
+			$suchTeile = "mm_titel%=$q|mm_tags%=$q";
+			if($this->wire->fields->get('mm_beschreibung')) {
+				$suchTeile .= "|mm_beschreibung%=$q";
+			}
+			$selector .= ", $suchTeile";
 		}
 
 		$selector .= ", start=$start, limit=$limit";
@@ -74,12 +90,19 @@ class MediaManagerAPI {
 		$p = $this->wire->pages->newPage(['template' => self::ITEM_TEMPLATE, 'parent' => $rootId]);
 		$p->title = $sanitizer->text($data['titel'] ?? 'Unbenannt');
 		$p->mm_titel = $p->title;
-		
+
 		$typMap = ['bild' => 1, 'video' => 2, 'pdf' => 3];
 		$p->mm_typ = $typMap[$data['typ'] ?? 'bild'] ?? 1;
 
+		if($p->hasField('mm_beschreibung') && array_key_exists('beschreibung', $data)) {
+			$p->mm_beschreibung = $this->wire->sanitizer->textarea((string) $data['beschreibung']);
+		}
+		if($p->hasField('mm_tags') && array_key_exists('tags', $data)) {
+			$p->mm_tags = $sanitizer->text((string) $data['tags']);
+		}
+
 		if(!empty($data['kategorie_id'])) {
-			$kat = $this->wire->pages->get((int)$data['kategorie_id']);
+			$kat = $this->wire->pages->get((int) $data['kategorie_id']);
 			if($kat->id) $p->mm_kategorie = $kat;
 		}
 
@@ -143,7 +166,7 @@ class MediaManagerAPI {
 				return;
 			}
 
-			$thumb = $img->size(self::THUMB_WIDTH, self::THUMB_HEIGHT, $this->thumbnailSizeOptions());
+			$thumb = $img->size(self::SLOT_GRID_W, self::SLOT_GRID_H, $this->thumbnailSizeOptions());
 			if($img->error) {
 				$this->wire->log->error('MM Variants: ' . $img->error);
 				return;
@@ -156,16 +179,62 @@ class MediaManagerAPI {
 		}
 	}
 
-	/** Optionen für Vorschau-Größen (Grid, Picker, Upload-Nachgenerierung). */
+	/**
+	 * Optionen für Vorschau-Größen (Grid, Picker, Upload-Nachgenerierung).
+	 * cropping: false = gesamtes Bild in die Box skaliert (ggf. Letterboxing), kein harter Zuschnitt.
+	 */
 	protected function thumbnailSizeOptions(): array {
-		return ['cropping' => true];
+		return ['cropping' => false];
 	}
 
-	public function getThumbnailUrl(Page $item, int $width = self::THUMB_WIDTH, int $height = self::THUMB_HEIGHT): string {
-		if($item->hasField('mm_bild') && count($item->mm_bild)) {
-			return $item->mm_bild->first()->size($width, $height, $this->thumbnailSizeOptions())->url;
+	/**
+	 * Dreht die Original-Datei eines Pageimage per ImageSizer (In-Place), löscht veraltete Variationen.
+	 *
+	 * Hinweis: ProcessWire hat kein Pageimage::rotate(); Rotation erfolgt über ImageSizerEngine auf der Quelldatei.
+	 *
+	 * @return bool True bei Erfolg
+	 */
+	public function rotateMasterPageimage(Pageimage $bild, int $degrees): bool {
+		if(!in_array(abs($degrees), [90, 180, 270], true)) return false;
+		$filename = $bild->filename();
+		if(!is_file($filename) || !is_readable($filename)) return false;
+
+		$sizer = new ImageSizer($filename, []);
+		$this->wire->wire($sizer);
+		if(!$sizer->rotate($degrees)) {
+			return false;
 		}
-		return '';
+		$bild->removeVariations();
+		$bild->getImageInfo(true);
+		return true;
+	}
+
+	public function getThumbnailUrl(Page $item, int $width = self::SLOT_GRID_W, int $height = self::SLOT_GRID_H): string {
+		$img = $this->getPrimaryPageimage($item);
+		if(!$img instanceof Pageimage) return '';
+		return $img->size($width, $height, $this->thumbnailSizeOptions())->url;
+	}
+
+	/**
+	 * Thumbnail-URL für einen definierten Anzeige-Slot (einheitliche Maße im gesamten Modul).
+	 *
+	 * @param string $slot grid | picker | edit | chip
+	 */
+	public function getThumbnailUrlForSlot(Page $item, string $slot): string {
+		$slot = strtolower($slot);
+		$w    = self::SLOT_GRID_W;
+		$h    = self::SLOT_GRID_H;
+		if($slot === 'picker') {
+			$w = self::SLOT_PICKER_W;
+			$h = self::SLOT_PICKER_H;
+		} elseif($slot === 'edit') {
+			$w = self::SLOT_EDIT_W;
+			$h = self::SLOT_EDIT_H;
+		} elseif($slot === 'chip') {
+			$w = self::SLOT_CHIP_W;
+			$h = self::SLOT_CHIP_H;
+		}
+		return $this->getThumbnailUrl($item, $w, $h);
 	}
 
 	public function getTypString(Page $item): string {
@@ -183,9 +252,22 @@ class MediaManagerAPI {
 		$p = $this->getMediaItem($id);
 		if(!$p->id) return $p;
 		$p->of(false);
-		$p->mm_titel = $this->wire->sanitizer->text($data['titel']);
-		if(isset($data['beschreibung'])) $p->mm_beschreibung = $data['beschreibung'];
-		if(isset($data['kategorie_id'])) $p->mm_kategorie = (int)$data['kategorie_id'] ?: null;
+		$sanitizer = $this->wire->sanitizer;
+		$p->mm_titel = $sanitizer->text($data['titel'] ?? '');
+		if(isset($data['beschreibung']) && $p->hasField('mm_beschreibung')) {
+			$p->mm_beschreibung = $sanitizer->textarea((string) $data['beschreibung']);
+		}
+		if(isset($data['tags']) && $p->hasField('mm_tags')) {
+			$p->mm_tags = $sanitizer->text((string) $data['tags']);
+		}
+		if(isset($data['typ']) && $data['typ'] !== '') {
+			$typMap = ['bild' => 1, 'video' => 2, 'pdf' => 3];
+			$t      = $sanitizer->name((string) $data['typ']);
+			if(isset($typMap[$t])) $p->mm_typ = $typMap[$t];
+		}
+		if(array_key_exists('kategorie_id', $data)) {
+			$p->mm_kategorie = (int) $data['kategorie_id'] ?: null;
+		}
 		$p->save();
 		return $p;
 	}
@@ -200,6 +282,7 @@ class MediaManagerAPI {
 		$this->_installFelder();
 		$this->_installFieldgroups();
 		$this->_installTemplates();
+		$this->_installKategorieTemplate();
 		$this->_installRootPage();
 	}
 
@@ -211,8 +294,10 @@ class MediaManagerAPI {
 			'mm_bild' => ['type' => 'FieldtypeImage', 'label' => 'Bild', 'ext' => 'jpg jpeg png gif webp'],
 			'mm_datei' => ['type' => 'FieldtypeFile', 'label' => 'Datei', 'ext' => 'pdf mp4 mov'],
 			'mm_titel' => ['type' => 'FieldtypeText', 'label' => 'Titel'],
+			'mm_beschreibung' => ['type' => 'FieldtypeTextarea', 'label' => 'Beschreibung'],
+			'mm_tags' => ['type' => 'FieldtypeText', 'label' => 'Tags'],
 			'mm_typ' => ['type' => 'FieldtypeOptions', 'label' => 'Typ'],
-			'mm_kategorie' => ['type' => 'FieldtypePage', 'label' => 'Kategorie']
+			'mm_kategorie' => ['type' => 'FieldtypePage', 'label' => 'Kategorie'],
 		];
 
 		foreach($fMap as $name => $cfg) {
@@ -232,7 +317,7 @@ class MediaManagerAPI {
 	protected function _installFieldgroups(): void {
 		$fg = $this->wire->fieldgroups->get(self::ITEM_TEMPLATE) ?: new Fieldgroup();
 		$fg->name = self::ITEM_TEMPLATE;
-		foreach(['title', 'mm_bild', 'mm_datei', 'mm_titel', 'mm_typ', 'mm_kategorie'] as $fn) {
+		foreach(['title', 'mm_bild', 'mm_datei', 'mm_titel', 'mm_beschreibung', 'mm_tags', 'mm_typ', 'mm_kategorie'] as $fn) {
 			if($this->wire->fields->get($fn)) $fg->add($fn);
 		}
 		$fg->save();
@@ -245,14 +330,102 @@ class MediaManagerAPI {
 		$t->save();
 	}
 
+	/**
+	 * Template für Kategorie-Pages (Kinder der Medien-Root-Page).
+	 */
+	protected function _installKategorieTemplate(): void {
+		$fg = $this->wire->fieldgroups->get(self::KATEGORIE_TEMPLATE) ?: new Fieldgroup();
+		$fg->name = self::KATEGORIE_TEMPLATE;
+		if($this->wire->fields->get('title')) {
+			if(!$fg->hasField('title')) $fg->add('title');
+		}
+		$fg->save();
+
+		$t = $this->wire->templates->get(self::KATEGORIE_TEMPLATE) ?: new Template();
+		$t->name = self::KATEGORIE_TEMPLATE;
+		$t->fieldgroup = $this->wire->fieldgroups->get(self::KATEGORIE_TEMPLATE);
+		$t->save();
+	}
+
 	protected function _installRootPage(): Page {
 		$admin = $this->wire->pages->get($this->wire->config->adminRootPageID);
-		$root = $this->wire->pages->get("name=" . self::ROOT_NAME);
+		$root = $this->wire->pages->get("name=" . self::ROOT_NAME . ", include=all");
 		if(!$root->id) {
 			$root = $this->wire->pages->newPage(['template' => 'admin', 'parent' => $admin, 'name' => self::ROOT_NAME, 'title' => 'Medien Manager']);
 			$root->save();
 		}
+		$cfg = $this->wire->modules->getModuleConfigData('bsProcessMedienManager');
+		if(empty($cfg['rootPageID']) && $root->id) {
+			$cfg['rootPageID'] = (int) $root->id;
+			$this->wire->modules->saveModuleConfigData('bsProcessMedienManager', $cfg);
+		}
 		return $root;
+	}
+
+	/**
+	 * Primäres Bild für Vorschau und Bildbearbeitung: zuerst mm_bild, sonst erstes Pageimage in mm_datei (Edge-Case).
+	 */
+	public function getPrimaryPageimage(Page $item): ?Pageimage {
+		if($item->hasField('mm_bild') && \count($item->mm_bild)) {
+			$first = $item->mm_bild->first();
+			return $first instanceof Pageimage ? $first : null;
+		}
+		if($item->hasField('mm_datei') && \count($item->mm_datei)) {
+			$first = $item->mm_datei->first();
+			return $first instanceof Pageimage ? $first : null;
+		}
+		return null;
+	}
+
+	/**
+	 * Erste nicht-Bild-Datei (Video/PDF) für Icon-Vorschau, falls kein Pageimage gesetzt.
+	 */
+	public function getPrimaryNonImageFile(Page $item): ?Pagefile {
+		if(!$item->hasField('mm_datei') || !\count($item->mm_datei)) return null;
+		$first = $item->mm_datei->first();
+		if($first instanceof Pageimage) return null;
+		return $first instanceof Pagefile ? $first : null;
+	}
+
+	/**
+	 * Neue Kategorie unter der Medien-Root (oder unter $parentId).
+	 */
+	public function createKategorie(string $titel, int $parentId = 0): Page {
+		$sanitizer = $this->wire->sanitizer;
+		$titel     = $sanitizer->text($titel);
+		if($titel === '') return $this->wire->pages->newNullPage();
+
+		if($parentId <= 0) $parentId = $this->getRootPageId();
+		$parent = $this->wire->pages->get((int) $parentId);
+		if(!$parent->id) return $this->wire->pages->newNullPage();
+
+		$baseName = $sanitizer->pageName($titel);
+		if($baseName === '') $baseName = 'kategorie';
+		$name = $this->wire->pages->names()->uniquePageName($baseName, null, ['parent' => $parent]);
+
+		$p = $this->wire->pages->newPage([
+			'template' => self::KATEGORIE_TEMPLATE,
+			'parent'   => $parent,
+			'name'     => $name,
+			'title'    => $titel,
+		]);
+		$p->addStatus(Page::statusHidden);
+		$p->save();
+		return $p;
+	}
+
+	/**
+	 * Kategorie löschen, nur wenn keine Medien-Items sie nutzen.
+	 */
+	public function deleteKategorie(int $id): bool {
+		$p = $this->wire->pages->get((int) $id);
+		if(!$p->id || $p->template->name !== self::KATEGORIE_TEMPLATE) return false;
+
+		$n = $this->wire->pages->count('template=' . self::ITEM_TEMPLATE . ', mm_kategorie=' . (int) $id . ', include=all');
+		if($n > 0) return false;
+
+		$this->wire->pages->delete($p, true);
+		return true;
 	}
 
 	public function uninstall(): void {} // Implementierung bei Bedarf

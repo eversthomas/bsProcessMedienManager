@@ -26,7 +26,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public static function getModuleInfo(): array {
 		return [
 			'title'       => 'Medien Manager',
-			'version'     => 1.1,
+			'version'     => 1.3,
 			'summary'     => 'Zentrales Medienmanagement für Bilder, Videos und PDFs.',
 			'author'      => 'bsProcessMedienManager',
 			'icon'        => 'photo',
@@ -76,21 +76,23 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	 * @return string Inline-<script>-Tag, oder leer wenn bereits injiziert
 	 */
 	protected function _injectJsConfig(): string {
-        if($this->jsConfigInjected) return '';
-        $this->jsConfigInjected = true;
-    
-        $ajaxUrl  = $this->wire->config->urls->admin . 'setup/medienmanager/ajax/';
-        $csrfName = $this->wire->session->CSRF->getTokenName();
-        $csrfVal  = $this->wire->session->CSRF->getTokenValue();
-    
-        $this->log("JS-Config injiziert, ajaxUrl: $ajaxUrl, csrfName: $csrfName");
-    
-        return "<script>window.bsProcessMedienManager = " . json_encode([
-            'ajaxUrl'  => $ajaxUrl,
-            'csrfName' => $csrfName,
-            'csrfVal'  => $csrfVal,
-        ]) . ";</script>\n";
-    }
+		if($this->jsConfigInjected) return '';
+		$this->jsConfigInjected = true;
+
+		$adminBase = $this->wire->config->urls->admin;
+		$ajaxUrl   = $adminBase . 'setup/medienmanager/ajax/';
+		// Absolute Basis-URL für POST auf imageedit (Rotate/Resize) — vermeidet fehlerhafte relative Pfade im JS.
+		$imageEditUrl = $adminBase . 'setup/medienmanager/imageedit/';
+		$csrfName     = $this->wire->session->CSRF->getTokenName();
+		$csrfVal      = $this->wire->session->CSRF->getTokenValue();
+
+		return "<script>window.bsProcessMedienManager = " . json_encode([
+			'ajaxUrl'      => $ajaxUrl,
+			'imageEditUrl' => $imageEditUrl,
+			'csrfName'     => $csrfName,
+			'csrfVal'      => $csrfVal,
+		]) . ";</script>\n";
+	}
 
 	/**
 	 * Modul initialisieren: Assets einreihen.
@@ -100,6 +102,11 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 	public function init(): void {
 		parent::init();
 		$this->api();
+
+		$cfg = $this->wire->modules->getModuleConfigData(__CLASS__);
+		$gl  = isset($cfg['gridLimit']) ? (int) $cfg['gridLimit'] : 24;
+		if($gl < 1) $gl = 24;
+		$this->limit = max(6, min(100, $gl));
 
 		if($this->wire->page->template == 'admin') {
 			$config    = $this->wire->config;
@@ -191,16 +198,24 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		}
 	}
 	
+	/**
+	 * Nur für Superuser: technische Diagnose (Request-Methode, ajax-Flag, GET/POST-Keys).
+	 * URL: /setup/medienmanager/test/
+	 */
 	public function ___executeTest(): string {
-        header('Content-Type: application/json; charset=utf-8');
-        return json_encode([
-            'status' => 'ok',
-            'ajax'   => $this->wire->config->ajax,
-            'method' => $_SERVER['REQUEST_METHOD'],
-            'get'    => $this->wire->input->get->getArray(),
-            'post'   => array_keys($this->wire->input->post->getArray()),
-        ]);
-    }
+		$this->_requirePermission();
+		if(!$this->wire->user->isSuperuser()) {
+			throw new WirePermissionException('Nur Superuser');
+		}
+		header('Content-Type: application/json; charset=utf-8');
+		return json_encode([
+			'status' => 'ok',
+			'ajax'   => $this->wire->config->ajax,
+			'method' => $_SERVER['REQUEST_METHOD'] ?? '',
+			'get'    => $this->wire->input->get->getArray(),
+			'post'   => array_keys($this->wire->input->post->getArray()),
+		]);
+	}
 
 	/**
 	 * Upload-Handler.
@@ -215,47 +230,118 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		$input     = $this->wire->input;
 		$sanitizer = $this->wire->sanitizer;
 
-		if(empty($_FILES['mm_datei']['tmp_name'])) {
-			$phpErrCode = $_FILES['mm_datei']['error'] ?? 'unbekannt';
-			$this->log("Upload fehlgeschlagen — kein tmp_name, PHP-Fehlercode: $phpErrCode", true);
+		$filesList = $this->_normalizeUploadedFiles();
+		if(!\count($filesList)) {
+			$err = isset($_FILES['mm_datei']['error']) && !\is_array($_FILES['mm_datei']['error'])
+				? (int) $_FILES['mm_datei']['error']
+				: UPLOAD_ERR_NO_FILE;
+			$msg = $this->_uploadErrorMessage($err);
+			$this->log("Upload fehlgeschlagen — keine Dateien, PHP error=$err ($msg)", true);
 			http_response_code(400);
-			return json_encode(['status' => 'error', 'message' => 'Keine Datei übertragen (PHP-Code: ' . $phpErrCode . ')']);
+			return json_encode(['status' => 'error', 'message' => $msg, 'results' => []]);
 		}
 
-		$uploadedFile = $_FILES['mm_datei']['tmp_name'];
-		$originalName = $_FILES['mm_datei']['name'];
-		$ext          = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-		$allowed      = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'pdf'];
+		$allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'pdf'];
+		$results = [];
+		$okCount = 0;
 
-		if(!in_array($ext, $allowed)) {
-			$this->log("Upload abgelehnt — Dateityp nicht erlaubt: $ext", true);
+		$postTitel = $sanitizer->text($input->post('titel') ?: '');
+		$multi     = \count($filesList) > 1;
+
+		foreach($filesList as $file) {
+			$origName = $file['name'];
+			if($file['error'] !== UPLOAD_ERR_OK) {
+				$results[] = [
+					'status'   => 'error',
+					'filename' => $origName,
+					'message'  => $this->_uploadErrorMessage($file['error']),
+				];
+				continue;
+			}
+			$tmp = $file['tmp_name'];
+			if(!is_uploaded_file($tmp)) {
+				$results[] = [
+					'status'   => 'error',
+					'filename' => $origName,
+					'message'  => 'Ungültige Upload-Datei',
+				];
+				continue;
+			}
+
+			$ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+			if(!\in_array($ext, $allowed, true)) {
+				$results[] = [
+					'status'   => 'error',
+					'filename' => $origName,
+					'message'  => 'Dateityp nicht erlaubt: ' . $ext,
+				];
+				continue;
+			}
+
+			$baseTitel = $multi
+				? pathinfo($origName, PATHINFO_FILENAME)
+				: ($postTitel !== '' ? $postTitel : pathinfo($origName, PATHINFO_FILENAME));
+
+			$data = [
+				'titel'        => $sanitizer->text($baseTitel),
+				'beschreibung' => $sanitizer->textarea($input->post('beschreibung') ?: ''),
+				'tags'         => $sanitizer->text($input->post('tags') ?: ''),
+				'typ'          => $sanitizer->name($input->post('typ') ?: $this->_extToTyp($ext)),
+				'kategorie_id' => (int) $input->post('kategorie_id'),
+			];
+
+			$this->log("Upload: " . $data['titel'] . " ($ext)" . ($multi ? " [Mehrfach]" : ''));
+			$item = $this->api()->createMediaItem($data, $tmp, $origName);
+
+			if(!$item->id) {
+				$results[] = [
+					'status'   => 'error',
+					'filename' => $origName,
+					'message'  => 'Item konnte nicht erstellt werden',
+				];
+				$this->log("createMediaItem ohne ID für $origName", true);
+				continue;
+			}
+
+			$okCount++;
+			$typStr = $this->api()->getTypString($item);
+			$results[] = [
+				'status'   => 'ok',
+				'filename' => $origName,
+				'id'       => $item->id,
+				'titel'    => $sanitizer->entities($item->mm_titel),
+				'thumb'    => $this->api()->getThumbnailUrlForSlot($item, 'grid'),
+				'typ'      => $typStr,
+				'hasImage' => $this->api()->getPrimaryPageimage($item) !== null,
+			];
+		}
+
+		if($okCount === 0) {
+			$firstErr = '';
+			foreach($results as $r) {
+				if(($r['status'] ?? '') === 'error' && !empty($r['message'])) {
+					$firstErr = (string) $r['message'];
+					break;
+				}
+			}
 			http_response_code(400);
-			return json_encode(['status' => 'error', 'message' => 'Dateityp nicht erlaubt: ' . $ext]);
+			return json_encode([
+				'status'   => 'error',
+				'message'  => $firstErr !== '' ? $firstErr : 'Keine Datei konnte verarbeitet werden.',
+				'results'  => $results,
+				'summary'  => ['ok' => 0, 'failed' => \count($results)],
+			]);
 		}
 
-		$data = [
-			'titel'        => $sanitizer->text($input->post('titel') ?: pathinfo($originalName, PATHINFO_FILENAME)),
-			'beschreibung' => $sanitizer->textarea($input->post('beschreibung') ?: ''),
-			'tags'         => $sanitizer->text($input->post('tags') ?: ''),
-			'typ'          => $sanitizer->name($input->post('typ') ?: $this->_extToTyp($ext)),
-			'kategorie_id' => (int) $input->post('kategorie_id'),
-		];
+		$this->log("Upload abgeschlossen — ok=$okCount, gesamt=" . \count($filesList));
 
-		$this->log("Upload gestartet: " . $data['titel'] . " ($ext)");
-		$item = $this->api()->createMediaItem($data, $uploadedFile, $originalName);
-
-		if(!$item->id) {
-			$this->log("Upload fehlgeschlagen — createMediaItem gab keine ID zurück", true);
-			http_response_code(500);
-			return json_encode(['status' => 'error', 'message' => 'Item konnte nicht erstellt werden']);
-		}
-
-		$this->log("Upload erfolgreich — Item-ID: " . $item->id);
 		return json_encode([
-			'status' => 'ok',
-			'id'     => $item->id,
-			'titel'  => $sanitizer->entities($item->mm_titel),
-			'thumb'  => $this->api()->getThumbnailUrl($item),
+			'status'  => 'ok',
+			'message' => $okCount === \count($filesList)
+				? ''
+				: sprintf('%d von %d Dateien übernommen.', $okCount, \count($filesList)),
+			'results' => $results,
+			'summary' => ['ok' => $okCount, 'failed' => \count($results) - $okCount],
 		]);
 	}
 
@@ -352,26 +438,44 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			$this->wire->session->redirect('../');
 		}
 
-		/** @var Pageimage|null $bild */
-		$bild = $item->mm_datei->first();
+		$bild = $this->api()->getPrimaryPageimage($item);
 		if(!$bild instanceof Pageimage) {
 			$this->wire->session->redirect('../edit/?id=' . $id);
 		}
 
-		if($this->wire->config->ajax && $input->post('action') === 'rotate') {
+		// Wie bei ___execute(): nicht nur $config->ajax — XHR setzt oft nur den Header.
+		$isAjax = $this->wire->config->ajax || !empty($_SERVER['HTTP_X_REQUESTED_WITH']);
+
+		if($isAjax && $input->post('action') === 'rotate') {
 			$this->_validateCsrf();
 			header('Content-Type: application/json; charset=utf-8');
 			$degrees = (int) $input->post('degrees');
-			$degrees = in_array($degrees, [-90, 90, 180]) ? $degrees : 0;
-			$rotated = $bild->rotate($degrees);
-			return json_encode(['status' => 'ok', 'url' => $rotated->url]);
+			if(!in_array($degrees, [-90, 90, 180, -180, 270, -270], true)) {
+				$degrees = 0;
+			}
+			$item->of(false);
+			$bild = $this->api()->getPrimaryPageimage($item);
+			if(!$bild instanceof Pageimage) {
+				return json_encode(['status' => 'error', 'message' => 'Kein Bild']);
+			}
+			if(!$this->api()->rotateMasterPageimage($bild, $degrees)) {
+				$this->log('Rotation fehlgeschlagen für Pageimage ' . $bild->filename, true);
+				return json_encode(['status' => 'error', 'message' => 'Rotation fehlgeschlagen']);
+			}
+			$bust = (string) time();
+			return json_encode(['status' => 'ok', 'url' => $bild->url . '?cb=' . $bust, 'width' => $bild->width, 'height' => $bild->height]);
 		}
 
-		if($this->wire->config->ajax && $input->post('action') === 'resize') {
+		if($isAjax && $input->post('action') === 'resize') {
 			$this->_validateCsrf();
 			header('Content-Type: application/json; charset=utf-8');
-			$w     = max(1, (int) $input->post('width'));
-			$h     = max(1, (int) $input->post('height'));
+			$w = max(1, (int) $input->post('width'));
+			$h = max(1, (int) $input->post('height'));
+			$item->of(false);
+			$bild = $this->api()->getPrimaryPageimage($item);
+			if(!$bild instanceof Pageimage) {
+				return json_encode(['status' => 'error', 'message' => 'Kein Bild']);
+			}
 			$sized = $bild->size($w, $h);
 			return json_encode([
 				'status' => 'ok',
@@ -440,6 +544,48 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		parent::___install();
 	}
 
+	/**
+	 * Beim Versions-Sprung: fehlende Felder/Templates nachziehen (z. B. mm_tags nach Update von &lt; 1.2).
+	 */
+	public function ___upgrade($fromVersion, $toVersion): void {
+		require_once __DIR__ . '/MediaManagerAPI.php';
+		$this->api = new MediaManagerAPI($this->wire());
+		if(version_compare((string) $fromVersion, '1.2', '<')) {
+			$this->api->install();
+		}
+		parent::___upgrade($fromVersion, $toVersion);
+	}
+
+	/**
+	 * Normalisiert $_FILES['mm_datei'] zu einer Liste (ein oder mehrere Uploads).
+	 *
+	 * @return list<array{name: string, tmp_name: string, error: int}>
+	 */
+	protected function _normalizeUploadedFiles(): array {
+		if(!isset($_FILES['mm_datei'])) return [];
+
+		$f = $_FILES['mm_datei'];
+		if(!\is_array($f['tmp_name'])) {
+			if($f['tmp_name'] === '' || $f['tmp_name'] === null) return [];
+			return [[
+				'name'     => (string) $f['name'],
+				'tmp_name' => (string) $f['tmp_name'],
+				'error'    => (int) $f['error'],
+			]];
+		}
+
+		$out = [];
+		foreach($f['tmp_name'] as $i => $tmp) {
+			if($tmp === '' || $tmp === null) continue;
+			$out[] = [
+				'name'     => (string) $f['name'][$i],
+				'tmp_name' => (string) $tmp,
+				'error'    => (int) $f['error'][$i],
+			];
+		}
+		return $out;
+	}
+
 	public function ___uninstall(): void {
 		if($this->api === null) {
 			require_once __DIR__ . '/MediaManagerAPI.php';
@@ -488,7 +634,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 
 		return json_encode([
 			'status' => 'ok',
-			'url'    => $this->api()->getThumbnailUrl($item),
+			'url'    => $this->api()->getThumbnailUrlForSlot($item, 'chip'),
 			'titel'  => $this->wire->sanitizer->entities($item->mm_titel ?: $item->title),
 			'typ'    => $this->api()->getTypString($item),
 		]);
@@ -619,7 +765,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		$sanitizer = $this->wire->sanitizer;
 		$titel     = $sanitizer->entities($item->mm_titel ?: $item->title);
 		$typ       = $this->api()->getTypString($item);
-		$thumbUrl  = $this->api()->getThumbnailUrl($item);
+		$thumbUrl  = $this->api()->getThumbnailUrlForSlot($item, 'grid');
 
 		if($thumbUrl) {
 			$thumbHtml = "<img src='" . $sanitizer->entities($thumbUrl) . "' alt='" . $titel . "' loading='lazy'>";
@@ -637,7 +783,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			</div>
 			<div class='mm-grid-actions'>
 				<a href='./edit/?id={$item->id}' class='mm-btn-edit' title='Bearbeiten'><i class='fa fa-pencil'></i></a>"
-				. ($typ === 'bild' ? "<a href='./imageedit/?id={$item->id}' class='mm-btn-imageedit' title='Bild bearbeiten'><i class='fa fa-crop'></i></a>" : '')
+				. ($this->api()->getPrimaryPageimage($item) ? "<a href='./imageedit/?id={$item->id}' class='mm-btn-imageedit' title='Bild bearbeiten'><i class='fa fa-crop'></i></a>" : '')
 				. "<button type='button' class='mm-btn-delete' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "' title='Löschen'><i class='fa fa-trash'></i></button>
 			</div>
 		</div>";
@@ -683,12 +829,13 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 						<input type='hidden' name='{$csrfName}' value='{$csrfVal}'>
 						<div class='mm-upload-drop-zone' id='mm-drop-zone'>
 							<i class='fa fa-cloud-upload'></i>
-							<p>Datei hier ablegen oder klicken zum Auswählen</p>
-							<p class='mm-upload-hint'>Erlaubt: JPG, PNG, GIF, WEBP, MP4, MOV, PDF</p>
-							<input type='file' name='mm_datei' id='mm-file-input' accept='.jpg,.jpeg,.png,.gif,.webp,.mp4,.mov,.pdf'>
+							<p class='mm-drop-zone-hint'>Datei(en) hier ablegen oder klicken zum Auswählen</p>
+							<p class='mm-upload-hint'>Erlaubt: JPG, PNG, GIF, WEBP, MP4, MOV, PDF — mehrere Dateien möglich</p>
+							<input type='file' name='mm_datei[]' id='mm-file-input' multiple accept='.jpg,.jpeg,.png,.gif,.webp,.mp4,.mov,.pdf'>
 						</div>
+						<ul class='mm-upload-file-list' id='mm-upload-file-list' hidden></ul>
 						<div class='uk-margin'>
-							<label>Titel</label>
+							<label>Titel <small class='mm-titel-hint'>(bei einer Datei; bei mehreren je Dateiname)</small></label>
 							<input type='text' name='titel' class='uk-input' placeholder='Automatisch aus Dateiname'>
 						</div>
 						<div class='uk-margin'>
@@ -702,6 +849,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 					</form>
 				</div>
 				<div class='mm-modal-footer'>
+					<div class='mm-upload-batch-result' id='mm-upload-batch-result' style='display:none'></div>
 					<div class='mm-upload-progress' style='display:none'>
 						<div class='mm-progress-bar'><div class='mm-progress-fill'></div></div>
 						<span class='mm-progress-text'>0%</span>
@@ -720,12 +868,13 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		$kategorien = $this->api()->getKategorien();
 
 		$vorschau = '';
-		$datei    = $item->mm_datei->first();
-		if($datei instanceof Pageimage) {
-			$thumb    = $datei->size(300, 225, ['cropping' => true]);
-			$vorschau = "<div class='mm-edit-preview'><img src='" . $sanitizer->entities($thumb->url) . "' alt=''></div>";
-		} elseif($datei) {
-			$vorschau = "<div class='mm-edit-preview mm-edit-preview-file'><i class='fa fa-file-o'></i><span>" . $sanitizer->entities($datei->basename) . "</span></div>";
+		$primImg    = $this->api()->getPrimaryPageimage($item);
+		$primFile = $this->api()->getPrimaryNonImageFile($item);
+		if($primImg instanceof Pageimage) {
+			$thumbUrl = $this->api()->getThumbnailUrlForSlot($item, 'edit');
+			$vorschau = "<div class='mm-edit-preview'><img src='" . $sanitizer->entities($thumbUrl) . "' alt='' loading='lazy'></div>";
+		} elseif($primFile) {
+			$vorschau = "<div class='mm-edit-preview mm-edit-preview-file'><i class='fa fa-file-o'></i><span>" . $sanitizer->entities($primFile->basename) . "</span></div>";
 		}
 
 		$typ   = $this->api()->getTypString($item);
@@ -753,14 +902,14 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 					<label class='uk-form-label'>Titel</label>
 					<input type='text' name='mm_titel' value='" . $sanitizer->entities($item->mm_titel) . "' class='uk-input' required>
 				</div>
-				<div class='uk-margin'>
+				" . ($item->hasField('mm_beschreibung') ? "<div class='uk-margin'>
 					<label class='uk-form-label'>Beschreibung</label>
 					<textarea name='mm_beschreibung' class='uk-textarea' rows='3'>" . $sanitizer->entities($item->mm_beschreibung) . "</textarea>
-				</div>
-				<div class='uk-margin'>
+				</div>" : '') . "
+				" . ($item->hasField('mm_tags') ? "<div class='uk-margin'>
 					<label class='uk-form-label'>Tags <small>(kommagetrennt)</small></label>
 					<input type='text' name='mm_tags' value='" . $sanitizer->entities($item->mm_tags) . "' class='uk-input'>
-				</div>
+				</div>" : '') . "
 				<div class='uk-margin'>
 					<label class='uk-form-label'>Typ</label>
 					<select name='mm_typ' class='uk-select'>{$typOptions}</select>
@@ -772,7 +921,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 				<div class='mm-edit-actions'>
 					<button type='submit' class='ui-button ui-state-default'><i class='fa fa-save'></i> Speichern</button>
 					<a href='../' class='ui-button'>Abbrechen</a>"
-					. ($typ === 'bild' ? "<a href='../imageedit/?id={$item->id}' class='ui-button'><i class='fa fa-crop'></i> Bild bearbeiten</a>" : '')
+					. ($this->api()->getPrimaryPageimage($item) ? "<a href='../imageedit/?id={$item->id}' class='ui-button'><i class='fa fa-crop'></i> Bild bearbeiten</a>" : '')
 					. "
 					<button type='button' class='mm-btn-delete-single ui-button' data-id='{$item->id}' data-csrf-name='" . $sanitizer->entities($csrfName) . "' data-csrf-val='" . $sanitizer->entities($csrfVal) . "'>
 						<i class='fa fa-trash'></i> Löschen
@@ -829,7 +978,7 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 		foreach($items as $item) {
 			$titel    = $sanitizer->entities($item->mm_titel ?: $item->title);
 			$typ      = $this->api()->getTypString($item);
-			$thumbUrl = $this->api()->getThumbnailUrl($item, 160, 120);
+			$thumbUrl = $this->api()->getThumbnailUrlForSlot($item, 'picker');
 
 			if($thumbUrl) {
 				$thumb = "<img src='" . $sanitizer->entities($thumbUrl) . "' alt='" . $titel . "' loading='lazy'>";
@@ -911,6 +1060,30 @@ class bsProcessMedienManager extends Process implements ConfigurableModule {
 			'pdf' => 'pdf',
 		];
 		return $map[$ext] ?? 'bild';
+	}
+
+	/**
+	 * Lesbare Meldung zu PHP-Upload-Fehlercodes (inkl. Größenlimits php.ini).
+	 */
+	protected function _uploadErrorMessage(int $code): string {
+		switch($code) {
+			case UPLOAD_ERR_INI_SIZE:
+				return 'Datei zu groß (Server-Limit upload_max_filesize/post_max_size in php.ini).';
+			case UPLOAD_ERR_FORM_SIZE:
+				return 'Datei zu groß (Formularlimit).';
+			case UPLOAD_ERR_PARTIAL:
+				return 'Datei nur teilweise übertragen.';
+			case UPLOAD_ERR_NO_FILE:
+				return 'Keine Datei übertragen.';
+			case UPLOAD_ERR_NO_TMP_DIR:
+				return 'Temporäres Verzeichnis fehlt (PHP).';
+			case UPLOAD_ERR_CANT_WRITE:
+				return 'Datei konnte nicht geschrieben werden.';
+			case UPLOAD_ERR_EXTENSION:
+				return 'Upload durch PHP-Erweiterung blockiert.';
+			default:
+				return 'Upload fehlgeschlagen (PHP-Code ' . $code . ').';
+		}
 	}
 
 	// -----------------------------------------------------------------------

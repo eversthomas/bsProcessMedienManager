@@ -216,19 +216,22 @@ class InputfieldMedienManager extends Inputfield implements InputfieldHasArrayVa
 		$sanitizer = $this->wire->sanitizer;
 		$titel     = $sanitizer->entities($item->mm_titel ?: $item->title);
 
-		// Thumbnail-URL bestimmen
-		$thumbHtml = '';
-		$datei     = $item->mm_datei->first();
+		require_once dirname(__FILE__) . '/MediaManagerAPI.php';
+		$api = new MediaManagerAPI($this->wire());
 
-		if($datei instanceof Pageimage) {
-			// Bild: PW-Resize nutzen
-			$thumb     = $datei->size(120, 90, ['cropping' => true]);
-			$thumbHtml = "<img src='" . $sanitizer->entities($thumb->url) . "' alt='" . $titel . "' loading='lazy'>";
-		} else {
-			// Video/PDF: Typ-Icon
-			$typMap    = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o'];
-			$typ       = strtolower((string) $item->mm_typ);
-			$icon      = $typMap[$typ] ?? 'fa-file';
+		$thumbHtml = '';
+		$primImg   = $api->getPrimaryPageimage($item);
+
+		if($primImg instanceof Pageimage) {
+			$thumbUrl  = $api->getThumbnailUrlForSlot($item, 'chip');
+			$thumbHtml = $thumbUrl !== ''
+				? "<img src='" . $sanitizer->entities($thumbUrl) . "' alt='" . $titel . "' loading='lazy'>"
+				: '';
+		}
+		if($thumbHtml === '') {
+			$typMap = ['video' => 'fa-film', 'pdf' => 'fa-file-pdf-o', 'bild' => 'fa-file-image-o'];
+			$typ    = $api->getTypString($item);
+			$icon   = $typMap[$typ] ?? 'fa-file';
 			$thumbHtml = "<span class='mm-type-icon'><i class='fa $icon'></i></span>";
 		}
 
