@@ -598,12 +598,24 @@ class MediaManagerAPI {
 	 * Primäres Bild für Vorschau und Bildbearbeitung: zuerst mm_bild, sonst erstes Pageimage in mm_datei (Edge-Case).
 	 */
 	public function getPrimaryPageimage(Page $item): ?Pageimage {
-		if($item->hasField('mm_bild') && \count($item->mm_bild)) {
-			$first = $item->mm_bild->first();
+		if($item->hasField('mm_bild')) {
+			$mmBild = $item->mm_bild;
+			$first = null;
+			if($mmBild instanceof Pageimage) {
+				$first = $mmBild;
+			} elseif($mmBild instanceof Pageimages && $mmBild->count()) {
+				$first = $mmBild->first();
+			}
 			return $first instanceof Pageimage ? $first : null;
 		}
-		if($item->hasField('mm_datei') && \count($item->mm_datei)) {
-			$first = $item->mm_datei->first();
+		if($item->hasField('mm_datei')) {
+			$mmDatei = $item->mm_datei;
+			$first = null;
+			if($mmDatei instanceof Pageimage) {
+				$first = $mmDatei;
+			} elseif($mmDatei instanceof Pagefiles && $mmDatei->count()) {
+				$first = $mmDatei->first();
+			}
 			return $first instanceof Pageimage ? $first : null;
 		}
 		return null;

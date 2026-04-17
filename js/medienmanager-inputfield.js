@@ -16,6 +16,16 @@
 	var cfg = window.InputfieldMedienManager || {};
 
 	/**
+	 * Config zur Laufzeit holen.
+	 *
+	 * Hintergrund: In Page-Edit-Forms wird die Inline-Config ggf. erst im Feld-HTML ausgegeben,
+	 * nachdem dieses JS (im <head>) bereits geladen wurde. Dann wäre ein einmaliges cfg-Caching leer.
+	 */
+	function getCfg() {
+		return window.InputfieldMedienManager || cfg || {};
+	}
+
+	/**
 	 * Zustand pro aktiv geöffnetem Modal (nach Feldname).
 	 * @type {Object.<string, {selectedIds: Set, currentFilters: Object, currentPage: number}>}
 	 */
@@ -51,10 +61,22 @@
 
 		// Vorauswahl aus bereits gesetzten Hidden-Inputs einlesen
 		var initialIds = new Set();
+		var initialIdsOrdered = [];
 		wrap.querySelectorAll('.mm-hidden-inputs input').forEach(function(inp) {
 			var id = parseInt(inp.value, 10);
-			if (id > 0) initialIds.add(id);
+			if (id > 0) {
+				initialIds.add(id);
+				initialIdsOrdered.push(id);
+			}
 		});
+
+		// maxItems aus dem Wrap-Element lesen (0 = unbegrenzt)
+		var maxItems = parseInt(wrap.dataset.max || '0', 10) || 0;
+		if (maxItems === 1 && initialIdsOrdered.length > 1) {
+			// Einzelauswahl: behalte nur das zuletzt gespeicherte (neueste gewinnt)
+			initialIds.clear();
+			initialIds.add(initialIdsOrdered[initialIdsOrdered.length - 1]);
+		}
 
 		var allowed = parseAllowedTypes(wrap);
 		var defaultTyp = '';
@@ -234,7 +256,8 @@
 			params.set('allowed_types', state.allowedTypes.join(','));
 		}
 
-		var url = (cfg.ajaxUrl || './ajax/') + '?' + params.toString();
+		var runtimeCfg = getCfg();
+		var url = (runtimeCfg.ajaxUrl || './ajax/') + '?' + params.toString();
 		var xhr = new XMLHttpRequest();
 
 		xhr.addEventListener('load', function() {
@@ -260,6 +283,13 @@
 					content.innerHTML = '<p class="mm-error">Fehler beim Laden</p>';
 				}
 			} catch (err) {
+				try {
+					console.log('[MedienManager Picker] Ungültige Serverantwort', {
+						status: xhr.status,
+						url: url,
+						responseHead: (xhr.responseText || '').slice(0, 300)
+					});
+				} catch(e) {}
 				content.innerHTML = '<p class="mm-error">Ungültige Server-Antwort</p>';
 			}
 		});
@@ -279,7 +309,8 @@
 	 * @param {HTMLSelectElement} select
 	 */
 	function loadKategorien(select) {
-		var url = (cfg.ajaxUrl || './ajax/') + '?action=kategorien';
+		var runtimeCfg = getCfg();
+		var url = (runtimeCfg.ajaxUrl || './ajax/') + '?action=kategorien';
 		var xhr = new XMLHttpRequest();
 
 		xhr.open('GET', url, true);
@@ -435,7 +466,8 @@
 	 * @param {HTMLElement} chip
 	 */
 	function loadThumb(fieldName, id, chip) {
-		var url = (cfg.ajaxUrl || './ajax/') + '?action=thumb&id=' + id;
+		var runtimeCfg = getCfg();
+		var url = (runtimeCfg.ajaxUrl || './ajax/') + '?action=thumb&id=' + id;
 		var xhr = new XMLHttpRequest();
 
 		xhr.addEventListener('load', function() {
@@ -478,6 +510,7 @@
 		});
 
 		xhr.open('GET', url, true);
+		xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
 		xhr.send();
 	}
 

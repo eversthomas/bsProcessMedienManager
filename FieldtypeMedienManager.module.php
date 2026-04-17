@@ -1,5 +1,7 @@
 <?php namespace ProcessWire;
 
+require_once __DIR__ . '/MediaManagerAPI.php';
+
 /**
  * FieldtypeMedienManager
  *
@@ -10,6 +12,80 @@
  * @copyright 2026 bsProcessMedienManager
  */
 class FieldtypeMedienManager extends FieldtypeMulti {
+
+	/**
+	 * Normalisiert gemischte Werte (Page/ID/Strings/Arrays) zu einer eindeutigen ID-Liste.
+	 *
+	 * @param mixed $value
+	 * @return int[]
+	 */
+	protected function normalizeIds($value): array {
+		if($value instanceof Page) {
+			return $value->id ? [(int) $value->id] : [];
+		}
+		if(is_int($value)) {
+			return $value > 0 ? [$value] : [];
+		}
+		if(is_string($value) && ctype_digit($value)) {
+			$id = (int) $value;
+			return $id > 0 ? [$id] : [];
+		}
+		if($value instanceof PageArray) {
+			$ids = [];
+			foreach($value as $p) {
+				if($p instanceof Page && $p->id) $ids[] = (int) $p->id;
+			}
+			return array_values(array_unique(array_filter($ids, fn($id) => $id > 0)));
+		}
+		if(is_array($value)) {
+			$ids = [];
+			foreach($value as $v) {
+				foreach($this->normalizeIds($v) as $id) {
+					$ids[] = $id;
+				}
+			}
+			return array_values(array_unique(array_filter($ids, fn($id) => $id > 0)));
+		}
+		// letzter Versuch: Objekt mit id-Property
+		if(is_object($value) && isset($value->id) && ctype_digit((string) $value->id)) {
+			$id = (int) $value->id;
+			return $id > 0 ? [$id] : [];
+		}
+		return [];
+	}
+	
+	/**
+	 * MaxItems aus Feldkonfiguration anwenden (0=unbegrenzt, 1=Einzelauswahl).
+	 *
+	 * @param int[] $ids
+	 * @return int[]
+	 */
+	protected function applyMaxItems(Field $field, array $ids): array {
+		$max = isset($field->maxItems) ? (int) $field->maxItems : 0;
+		if($max <= 0) return $ids;
+		$ids = array_values($ids);
+		if(count($ids) <= $max) return $ids;
+		// Bei Einzelauswahl: letztes Element behalten (entspricht „neueste Auswahl gewinnt“)
+		if($max === 1) return [ (int) end($ids) ];
+		return array_slice($ids, 0, $max);
+	}
+
+	/**
+	 * Debug-Logging (nur Superuser) nach /site/assets/logs/medienmanager.txt
+	 *
+	 * @param array<string, mixed> $ctx
+	 */
+	protected function debugLog(string $msg, array $ctx = []): void {
+		try {
+			if(!$this->wire->user || !$this->wire->user->isSuperuser()) return;
+			if(count($ctx)) {
+				$msg .= ' | ' . json_encode($ctx, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+			}
+			$this->wire->log->save('medienmanager', $msg);
+		} catch(\Throwable $e) {
+			// nie Debug-Logging Fehler werfen lassen
+		}
+	}
 
 	/**
 	 * Modul-Metadaten für ProcessWire.
@@ -74,23 +150,30 @@ class FieldtypeMedienManager extends FieldtypeMulti {
 
 		if(empty($value) || !is_array($value)) return $pageArray;
 
-		// IDs als Integer sicherstellen
-		$ids = array_map('intval', $value);
-		$ids = array_filter($ids, fn($id) => $id > 0);
+		// IDs normalisieren und maxItems anwenden
+		$ids = $this->applyMaxItems($field, $this->normalizeIds($value));
 
 		if(empty($ids)) return $pageArray;
 
 		// Pages laden — include=all da Items statusHidden haben
-		$items = $this->wire->pages->getById($ids, [
-			'template' => MediaManagerAPI::ITEM_TEMPLATE,
-			'cache'    => true,
-		]);
+		$items = $this->wire->pages->find(
+			"id=" . implode('|', $ids) . ", template=" . MediaManagerAPI::ITEM_TEMPLATE . ", include=all"
+		);
 
 		// Sortierung aus DB beibehalten
 		foreach($ids as $id) {
 			$p = $items->get("id=$id");
 			if($p && $p->id) $pageArray->add($p);
 		}
+
+		$this->debugLog('FT-MM wakeupValue', [
+			'pageId'      => (int) $page->id,
+			'field'       => (string) $field->name,
+			'rawCount'    => count($value),
+			'idsIn'       => $ids,
+			'loadedCount' => $pageArray->count(),
+			'loadedIds'   => array_map('intval', explode('|', $pageArray->implode('|', 'id'))),
+		]);
 
 		return $pageArray;
 	}
@@ -106,16 +189,79 @@ class FieldtypeMedienManager extends FieldtypeMulti {
 	public function ___sleepValue(Page $page, Field $field, $value): array {
 		$ids = [];
 
+		$type = is_object($value) ? get_class($value) : gettype($value);
+
+		// Einzelwert (z. B. bei maxItems=1 kann ProcessWire hier eine ID liefern)
+		if(is_int($value) || (is_string($value) && ctype_digit($value))) {
+			$id = (int) $value;
+			if($id > 0) {
+				$p = $this->wire->pages->get("id=$id, template=" . MediaManagerAPI::ITEM_TEMPLATE . ", include=all");
+				if($p && $p->id) {
+					$ids = [$p->id];
+				}
+			}
+			$this->debugLog('FT-MM sleepValue (single)', [
+				'pageId' => (int) $page->id,
+				'field'  => (string) $field->name,
+				'type'   => $type,
+				'idIn'   => (int) $value,
+				'idsOut' => $ids,
+			]);
+			return $ids;
+		}
+
 		if($value instanceof Page) {
 			$value = $this->wire->pages->newPageArray()->add($value);
 		}
-		if(!$value instanceof PageArray) return $ids;
-
-		foreach($value as $item) {
-			// Nur gültige medienmanager-item Pages akzeptieren
-			if($item instanceof Page && $item->id && $item->template->name === MediaManagerAPI::ITEM_TEMPLATE) {
-				$ids[] = $item->id;
+		if($value instanceof PageArray) {
+			foreach($value as $item) {
+				// Nur gültige medienmanager-item Pages akzeptieren
+				if($item instanceof Page && $item->id && $item->template->name === MediaManagerAPI::ITEM_TEMPLATE) {
+					$ids[] = $item->id;
+				}
 			}
+			$ids = $this->applyMaxItems($field, $ids);
+			$this->debugLog('FT-MM sleepValue (PageArray)', [
+				'pageId' => (int) $page->id,
+				'field'  => (string) $field->name,
+				'type'   => $type,
+				'idsOut' => $ids,
+			]);
+			return $ids;
+		}
+
+		// Fallback: ProcessWire kann bei Multi-Feldern auch ein Array von IDs liefern
+		if(is_array($value)) {
+			$raw = $this->applyMaxItems($field, $this->normalizeIds($value));
+			if(!count($raw)) return $ids;
+
+			// include=all, weil Medien-Items typischerweise hidden sind
+			$items = $this->wire->pages->find(
+				"id=" . implode('|', $raw) . ", template=" . MediaManagerAPI::ITEM_TEMPLATE . ", include=all"
+			);
+
+			foreach($raw as $id) {
+				$p = $items->get("id=$id");
+				if($p && $p->id) $ids[] = $p->id;
+			}
+			$ids = $this->applyMaxItems($field, $ids);
+
+			$this->debugLog('FT-MM sleepValue (array)', [
+				'pageId'   => (int) $page->id,
+				'field'    => (string) $field->name,
+				'type'     => $type,
+				'idsIn'    => $raw,
+				'idsOut'   => $ids,
+				'foundCnt' => $items->count(),
+			]);
+		}
+
+		if(!is_array($value) && !$value instanceof PageArray) {
+			$this->debugLog('FT-MM sleepValue (unhandled)', [
+				'pageId' => (int) $page->id,
+				'field'  => (string) $field->name,
+				'type'   => $type,
+			]);
 		}
 
 		return $ids;
@@ -132,6 +278,10 @@ class FieldtypeMedienManager extends FieldtypeMulti {
 	public function sanitizeValue(Page $page, Field $field, $value): mixed {
 		if($value instanceof Page) return $value->id ? $value : $this->wire->pages->newNullPage();
 		if($value instanceof PageArray) return $value;
+		if(is_array($value)) {
+			// Wichtig: array-cast zu int wäre immer 1 und würde beim Speichern alles verlieren.
+			return $this->normalizeIds($value);
+		}
 		return (int) $value;
 	}
 
